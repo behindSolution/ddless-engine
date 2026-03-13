@@ -1,0 +1,99 @@
+Terms of Use
+DDLess — Behind Solutions
+
+Last updated: February 22, 2026
+
+1. Acceptance of Terms
+By downloading, installing, or using DDLess, you agree to be bound by these Terms of Use. If you do not agree with any part of these terms, you must not use the software.
+
+2. License Grant
+Behind Solutions grants you a limited, non-exclusive, non-transferable, revocable license to use DDLess subject to the following conditions:
+
+- Personal license: each license key is issued to a single individual and may not be shared, transferred, resold, or sublicensed
+- Device usage: you may install and use DDLess on multiple devices you personally own and operate, under the same license key
+- Pro features: certain features (such as SSH remote debugging) require a valid Pro license and are unavailable under the free tier
+
+3. Restrictions
+You agree NOT to:
+
+- Reverse engineer, decompile, disassemble, or attempt to derive the source code of DDLess
+- Modify, adapt, translate, or create derivative works based on the software
+- Redistribute, sublicense, lease, rent, or lend the software or your license key to any third party
+- Remove, alter, or obscure any proprietary notices, labels, or marks on the software
+- Use the software for any unlawful purpose or in violation of any applicable laws or regulations
+- Circumvent, disable, or tamper with the license validation or any security mechanisms of the software
+- Use automated tools to generate, guess, or brute-force license keys
+
+4. Intellectual Property
+DDLess, including its code, design, documentation, logos, and trademarks, is the exclusive property of Behind Solutions. These Terms of Use do not grant you any ownership rights over the software. All rights not expressly granted herein are reserved.
+
+Your code, projects, and data remain entirely yours. DDLess does not claim any rights over the content you debug, test, or process using the software.
+
+5. AI Copilot
+The AI Copilot feature connects to third-party AI providers (OpenAI, Anthropic, or Ollama) using API keys you provide. By using this feature:
+
+- You acknowledge that your debugging context and chat messages are sent to the AI provider you selected
+- You are responsible for complying with the terms of service of your chosen AI provider
+- You understand that AI-generated suggestions are informational and may be inaccurate — you are solely responsible for any actions taken based on those suggestions
+- Behind Solutions is not responsible for the availability, accuracy, or behavior of third-party AI services
+
+6. Proxy Mode
+The proxy mode intercepts HTTP traffic on your local machine for debugging purposes. By using this feature:
+
+- You are solely responsible for ensuring you have authorization to intercept and inspect the traffic being debugged
+- You agree to use proxy mode only on applications and systems you own or have explicit permission to debug
+- Behind Solutions is not responsible for any misuse of the proxy functionality
+
+7. Updates
+DDLess may automatically check for and download updates. Updates may include bug fixes, new features, or security patches. By using DDLess, you consent to receiving automatic updates. Continued use of the software after an update constitutes acceptance of any changes introduced by that update.
+
+8. Disclaimer of Warranties
+DDLess is provided "AS IS" and "AS AVAILABLE", without warranty of any kind, express or implied, including but not limited to:
+
+- Warranties of merchantability or fitness for a particular purpose
+- Warranties that the software will be uninterrupted, error-free, or free of harmful components
+- Warranties regarding the accuracy or reliability of any output, including AI Copilot suggestions
+
+You use DDLess at your own risk. Behind Solutions does not guarantee that the software will meet your specific requirements or expectations.
+
+9. Limitation of Liability
+To the maximum extent permitted by applicable law, Behind Solutions and its contributors shall not be liable for any:
+
+- Direct, indirect, incidental, special, consequential, or punitive damages
+- Loss of data, profits, revenue, or business opportunities
+- Damage to your code, projects, servers, or systems
+- Interruption of development workflows or production environments
+
+This limitation applies regardless of the cause of action, whether in contract, tort, negligence, strict liability, or otherwise, even if Behind Solutions has been advised of the possibility of such damages.
+
+10. Indemnification
+You agree to indemnify, defend, and hold harmless Behind Solutions, its owners, employees, and contributors from any claims, damages, losses, liabilities, costs, or expenses (including reasonable attorney fees) arising from:
+
+- Your use or misuse of DDLess
+- Your violation of these Terms of Use
+- Your violation of any applicable law or regulation
+- Your use of the proxy mode on systems you are not authorized to debug
+
+11. Termination
+Behind Solutions reserves the right to revoke your license and terminate your access to DDLess at any time, with or without cause, including but not limited to:
+
+- Violation of these Terms of Use
+- Fraudulent use or sharing of license keys
+- Attempts to circumvent license validation or security mechanisms
+
+Upon termination, you must cease all use of the software and delete all copies from your devices. Sections 4, 8, 9, 10, and 14 shall survive termination.
+
+12. Third-Party Services
+DDLess integrates with third-party services including Mixpanel (analytics), Amazon S3 (updates), and AI providers (OpenAI, Anthropic, Ollama). Behind Solutions is not responsible for the availability, security, or terms of service of these third-party services. Your use of these services is subject to their respective terms and policies.
+
+13. Changes to These Terms
+Behind Solutions reserves the right to modify these Terms of Use at any time. Changes will be reflected in the "Last updated" date at the top of this document. Continued use of DDLess after changes constitutes acceptance of the updated terms. It is your responsibility to review these terms periodically.
+
+14. Governing Law
+These Terms of Use shall be governed by and construed in accordance with the laws of Brazil. Any disputes arising from or relating to these terms or the use of DDLess shall be resolved in the courts of competent jurisdiction in Brazil.
+
+15. Contact
+If you have questions about these Terms of Use:
+
+- Email: contact@ddless.com
+- Website: https://ddless.com
