@@ -52,7 +52,8 @@ test('DateTime returns ATOM format', function () {
 
 test('JsonSerializable objects use jsonSerialize()', function () {
     $obj = new class implements \JsonSerializable {
-        public function jsonSerialize(): mixed {
+        #[\ReturnTypeWillChange]
+        public function jsonSerialize() {
             return ['serialized' => true];
         }
     };
