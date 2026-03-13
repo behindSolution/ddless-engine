@@ -1,5 +1,9 @@
 # DDLess PHP Debug Engine
 
+![Tests](https://github.com/behindSolution/ddless-engine/actions/workflows/tests.yml/badge.svg)
+
+> **This is the PHP engine only.** For the full debugging experience (desktop app, UI, AI Copilot, Task Runner), visit [ddless.com](https://ddless.com)
+
 The PHP runtime engine that powers [DDLess](https://ddless.com) — a visual debugger for PHP applications.
 
 This engine handles code instrumentation, breakpoint management, step-through execution, and variable inspection. It works with any PHP project (vanilla PHP, Laravel, Symfony, etc.) running on PHP 7.4+.
@@ -54,4 +58,6 @@ Tests run automatically on every push and PR against PHP 7.4, 8.0, 8.1, 8.2, 8.3
 
 ## License
 
-Proprietary. See [DDLess](https://ddless.com) for licensing details.
+Source-available. You may read, audit, and report issues.
+Redistribution and derivative products are not permitted.
+See [LICENSE](LICENSE) for full terms.
