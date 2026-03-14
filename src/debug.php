@@ -1867,17 +1867,87 @@ function ddless_handle_breakpoint(
 
     ddless_log("[ddless] Waiting for debug command...\n");
 
-    $responseData = ddless_wait_for_command();
+    while (true) {
+        $responseData = ddless_wait_for_command();
 
-    if ($responseData === null) {
-        ddless_log("[ddless] No response received, continuing execution\n");
-        ddless_cleanup_debug_files();
-        return;
+        if ($responseData === null) {
+            ddless_log("[ddless] No response received, continuing execution\n");
+            ddless_cleanup_debug_files();
+            return;
+        }
+
+        $command = strtolower($responseData['command'] ?? 'continue');
+
+        ddless_log("[ddless] Received command: {$command}\n");
+
+        if ($command === 'evaluate') {
+            $expression = $responseData['expression'] ?? '';
+            $requestId = $responseData['requestId'] ?? '';
+            $useStatements = $responseData['useStatements'] ?? [];
+
+            if ($expression === '') {
+                $evalPayload = [
+                    'type' => 'evaluate_result',
+                    'sessionId' => $sessionId,
+                    'requestId' => $requestId,
+                    'success' => false,
+                    'result' => null,
+                    'error' => 'Empty expression',
+                    'duration_ms' => 0,
+                ];
+                ddless_write_breakpoint_state($evalPayload);
+                continue;
+            }
+
+            $startTime = microtime(true);
+
+            try {
+                $previousTimeLimit = ini_get('max_execution_time');
+                set_time_limit(15); // Prevent infinite loops
+
+                ob_start();
+                $result = ddless_eval_in_context($expression, $rawVariables, $rawBacktrace, false);
+                $output = ob_get_clean();
+
+                set_time_limit((int) $previousTimeLimit);
+
+                $normalized = ddless_normalize_value($result, 0);
+                $durationMs = round((microtime(true) - $startTime) * 1000, 2);
+
+                $evalPayload = [
+                    'type' => 'evaluate_result',
+                    'sessionId' => $sessionId,
+                    'requestId' => $requestId,
+                    'success' => true,
+                    'result' => $normalized,
+                    'output' => $output ?: null,
+                    'error' => null,
+                    'duration_ms' => $durationMs,
+                ];
+            } catch (\Throwable $e) {
+                ob_end_clean();
+                set_time_limit((int) ($previousTimeLimit ?? 0));
+
+                $durationMs = round((microtime(true) - $startTime) * 1000, 2);
+
+                $evalPayload = [
+                    'type' => 'evaluate_result',
+                    'sessionId' => $sessionId,
+                    'requestId' => $requestId,
+                    'success' => false,
+                    'result' => null,
+                    'error' => $e->getMessage(),
+                    'duration_ms' => $durationMs,
+                ];
+            }
+
+            ddless_write_breakpoint_state($evalPayload);
+            ddless_log("[ddless] Evaluate result written, waiting for next command...\n");
+            continue;
+        }
+
+        break;
     }
-
-    $command = strtolower($responseData['command'] ?? 'continue');
-
-    ddless_log("[ddless] Received command: {$command}\n");
 
     $resetAllStepModes = function() {
         $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false;
