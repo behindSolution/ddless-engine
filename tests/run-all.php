@@ -18,6 +18,7 @@ $testFiles = [
     'NormalizeValueTest.php',
     'InstrumentTraceTest.php',
     'HttpRequestTest.php',
+    'EvalInContextTest.php',
 ];
 
 foreach ($testFiles as $file) {
