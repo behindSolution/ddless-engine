@@ -118,8 +118,12 @@ function ddless_write_breakpoint_state(array $payload): bool
     return true;
 }
 
-function ddless_wait_for_command(int $timeoutSeconds = 1800): ?array
+function ddless_wait_for_command(int $timeoutSeconds = 0): ?array
 {
+    if ($timeoutSeconds <= 0) {
+        $timeoutSeconds = $GLOBALS['__DDLESS_BREAKPOINT_TIMEOUT__'] ?? 3600;
+    }
+
     $commandFile = ddless_get_breakpoint_command_file();
     $startTime = time();
     $pollInterval = 50000; // 50ms in microseconds
@@ -168,6 +172,7 @@ $GLOBALS['__DDLESS_HIT_USER_BPS__'] = []; // Track user breakpoints already hit 
 // Settings
 $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] = 4; // Default serialize depth for variables
 $GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__'] = false; // Experimental: instrument code outside function bodies
+$GLOBALS['__DDLESS_BREAKPOINT_TIMEOUT__'] = 3600; // Default: 60 minutes (in seconds)
 
 $GLOBALS['__DDLESS_MODIFIED_VARS__'] = null; // Playground: modified variables to extract back into scope
 
@@ -208,6 +213,9 @@ if (is_file($__ddless_breakpoints_file)) {
             }
             if (isset($__ddless_settings['allowGlobalScope'])) {
                 $GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__'] = (bool)$__ddless_settings['allowGlobalScope'];
+            }
+            if (isset($__ddless_settings['breakpointTimeout']) && is_numeric($__ddless_settings['breakpointTimeout'])) {
+                $GLOBALS['__DDLESS_BREAKPOINT_TIMEOUT__'] = max(1, (int)$__ddless_settings['breakpointTimeout']) * 60; // Convert minutes to seconds
             }
         } else {
             $__ddless_bp_map = $__ddless_raw;
@@ -1893,8 +1901,20 @@ function ddless_handle_breakpoint(
         $responseData = ddless_wait_for_command();
 
         if ($responseData === null) {
-            ddless_log("[ddless] No response received, continuing execution\n");
+            ddless_log("[ddless] Timeout waiting for command, forcing continue\n");
             ddless_cleanup_debug_files();
+            $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false;
+            $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null;
+            $GLOBALS['__DDLESS_STEP_OVER_DEPTH__'] = null;
+            $GLOBALS['__DDLESS_STEP_OVER_FILE__'] = null;
+            $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null;
+            $timeoutPayload = json_encode([
+                'type' => 'timeout',
+                'sessionId' => $sessionId,
+                'message' => 'Debug session timed out after ' . round(($GLOBALS['__DDLESS_BREAKPOINT_TIMEOUT__'] ?? 3600) / 60) . ' minutes of inactivity',
+            ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            fwrite(STDOUT, "__DDLESS_SESSION_TIMEOUT__:{$timeoutPayload}\n");
+            fflush(STDOUT);
             return;
         }
 
