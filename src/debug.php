@@ -1782,6 +1782,7 @@ function ddless_handle_breakpoint(
     }
 
     $rawVariables = is_array($scopeVariables) ? $scopeVariables : [];
+    $originalRawVariables = $rawVariables;
     $rawBacktrace = is_array($scopeBacktrace)
         ? $scopeBacktrace
         : debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT, 32);
@@ -1982,7 +1983,9 @@ function ddless_handle_breakpoint(
         break;
     }
 
-    $GLOBALS['__DDLESS_MODIFIED_VARS__'] = $rawVariables;
+    if ($rawVariables !== $originalRawVariables) {
+        $GLOBALS['__DDLESS_MODIFIED_VARS__'] = $rawVariables;
+    }
 
     $resetAllStepModes = function() {
         $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false;
