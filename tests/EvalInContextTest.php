@@ -19,12 +19,14 @@ class EvalTestDummy {
 section('ddless_eval_in_context() — returnValue=true (default)');
 
 test('evaluates simple expression', function () {
-    $result = ddless_eval_in_context('1 + 2', [], []);
+    $vars = [];
+    $result = ddless_eval_in_context('1 + 2', $vars, []);
     assert_eq(3, $result);
 });
 
 test('evaluates string expression', function () {
-    $result = ddless_eval_in_context('"hello " . "world"', [], []);
+    $vars = [];
+    $result = ddless_eval_in_context('"hello " . "world"', $vars, []);
     assert_eq('hello world', $result);
 });
 
@@ -41,16 +43,19 @@ test('accesses array scope variable', function () {
 });
 
 test('scope variables do not leak between calls', function () {
-    ddless_eval_in_context('$leak = 999', ['leak' => 999], []);
+    $vars1 = ['leak' => 999];
+    ddless_eval_in_context('$leak = 999', $vars1, []);
     // $leak should not exist in the next call
-    $result = ddless_eval_in_context('isset($leak) ? $leak : null', [], []);
+    $vars2 = [];
+    $result = ddless_eval_in_context('isset($leak) ? $leak : null', $vars2, []);
     assert_null($result);
 });
 
 section('ddless_eval_in_context() — returnValue=false (playground mode)');
 
 test('executes raw code and returns result', function () {
-    $result = ddless_eval_in_context('$a = 5; $b = 10; return $a * $b;', [], [], false);
+    $vars = [];
+    $result = ddless_eval_in_context('$a = 5; $b = 10; return $a * $b;', $vars, [], false);
     assert_eq(50, $result);
 });
 
@@ -63,12 +68,14 @@ foreach ($items as $i) {
 }
 return $sum;
 PHP;
-    $result = ddless_eval_in_context($code, [], [], false);
+    $vars = [];
+    $result = ddless_eval_in_context($code, $vars, [], false);
     assert_eq(15, $result);
 });
 
 test('returns null when no return statement', function () {
-    $result = ddless_eval_in_context('$x = 42;', [], [], false);
+    $vars = [];
+    $result = ddless_eval_in_context('$x = 42;', $vars, [], false);
     assert_null($result);
 });
 
@@ -79,7 +86,8 @@ test('accesses scope variables in raw mode', function () {
 });
 
 test('can use built-in functions', function () {
-    $result = ddless_eval_in_context('return array_map(fn($v) => $v * 2, [1,2,3]);', [], [], false);
+    $vars = [];
+    $result = ddless_eval_in_context('return array_map(fn($v) => $v * 2, [1,2,3]);', $vars, [], false);
     assert_eq([2, 4, 6], $result);
 });
 
@@ -88,7 +96,8 @@ test('can use anonymous functions', function () {
 $fn = function($a, $b) { return $a + $b; };
 return $fn(3, 7);
 PHP;
-    $result = ddless_eval_in_context($code, [], [], false);
+    $vars = [];
+    $result = ddless_eval_in_context($code, $vars, [], false);
     assert_eq(10, $result);
 });
 
@@ -99,7 +108,8 @@ test('binds $this when backtrace has object', function () {
     $backtrace = [
         ['function' => 'someMethod', 'object' => $obj],
     ];
-    $result = ddless_eval_in_context('$this->name', [], $backtrace);
+    $vars = [];
+    $result = ddless_eval_in_context('$this->name', $vars, $backtrace);
     assert_eq('Alice', $result);
 });
 
@@ -108,7 +118,8 @@ test('$this can access private members via closure binding', function () {
     $backtrace = [
         ['function' => 'someMethod', 'object' => $obj],
     ];
-    $result = ddless_eval_in_context('$this->getSecret()', [], $backtrace);
+    $vars = [];
+    $result = ddless_eval_in_context('$this->getSecret()', $vars, $backtrace);
     assert_eq(42, $result);
 });
 
@@ -119,7 +130,8 @@ test('skips ddless_ frames in backtrace', function () {
         ['function' => 'ddless_handle_breakpoint'],
         ['function' => 'someMethod', 'object' => $obj],
     ];
-    $result = ddless_eval_in_context('$this->name', [], $backtrace);
+    $vars = [];
+    $result = ddless_eval_in_context('$this->name', $vars, $backtrace);
     assert_eq('Alice', $result);
 });
 
@@ -127,8 +139,8 @@ test('no $this when backtrace has no object', function () {
     $backtrace = [
         ['function' => 'plainFunction'],
     ];
-    // Without object binding, $this is not available — eval returns null via @
-    $result = ddless_eval_in_context('isset($this) ? "has this" : "no this"', [], $backtrace);
+    $vars = [];
+    $result = ddless_eval_in_context('isset($this) ? "has this" : "no this"', $vars, $backtrace);
     assert_eq('no this', $result);
 });
 
@@ -147,7 +159,8 @@ section('ddless_eval_in_context() — error handling');
 test('syntax error throws ParseError', function () {
     $threw = false;
     try {
-        ddless_eval_in_context('invalid syntax !!!', [], []);
+        $vars = [];
+        ddless_eval_in_context('invalid syntax !!!', $vars, []);
     } catch (\ParseError $e) {
         $threw = true;
     }
@@ -155,8 +168,49 @@ test('syntax error throws ParseError', function () {
 });
 
 test('undefined variable returns null (suppressed by @)', function () {
-    $result = ddless_eval_in_context('$nonExistentVar', [], []);
+    $vars = [];
+    $result = ddless_eval_in_context('$nonExistentVar', $vars, []);
     assert_null($result);
+});
+
+section('ddless_eval_in_context() — variable modification (playground)');
+
+test('modifies scope variables in playground mode', function () {
+    $vars = ['x' => 10, 'y' => 20];
+    ddless_eval_in_context('$x = 99;', $vars, [], false);
+    assert_eq(99, $vars['x'], 'x should be updated to 99');
+    assert_eq(20, $vars['y'], 'y should remain unchanged');
+});
+
+test('adds new variables in playground mode', function () {
+    $vars = ['x' => 10];
+    ddless_eval_in_context('$newVar = "hello";', $vars, [], false);
+    assert_true(array_key_exists('newVar', $vars), 'newVar should exist in scope');
+    assert_eq('hello', $vars['newVar']);
+});
+
+test('does not modify scope in expression mode', function () {
+    $vars = ['x' => 10];
+    ddless_eval_in_context('$x + 5', $vars, []);
+    assert_eq(10, $vars['x'], 'x should remain unchanged in expression mode');
+});
+
+test('modified variables persist across multiple evals', function () {
+    $vars = ['counter' => 0];
+    ddless_eval_in_context('$counter++;', $vars, [], false);
+    assert_eq(1, $vars['counter']);
+    ddless_eval_in_context('$counter += 10;', $vars, [], false);
+    assert_eq(11, $vars['counter']);
+});
+
+test('variable modification works with $this binding', function () {
+    $obj = new EvalTestDummy();
+    $backtrace = [
+        ['function' => 'someMethod', 'object' => $obj],
+    ];
+    $vars = ['x' => 1];
+    ddless_eval_in_context('$x = $this->name;', $vars, $backtrace, false);
+    assert_eq('Alice', $vars['x']);
 });
 
 // Print results if run standalone
