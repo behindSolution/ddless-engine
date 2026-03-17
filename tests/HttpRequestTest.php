@@ -17,16 +17,20 @@ if (!class_exists('DDLessPhpInputStreamTestDouble')) {
     {
         public $context;
         private int $position = 0;
+        private bool $isInput = false;
+        private string $buffer = '';
 
         public function stream_open($path, $mode, $options, &$opened_path)
         {
             $this->position = 0;
+            $this->isInput = ($path === 'php://input');
+            $this->buffer = '';
             return true;
         }
 
         public function stream_read($count)
         {
-            $dataSource = $GLOBALS['__DDLESS_RAW_INPUT__'] ?? '';
+            $dataSource = $this->isInput ? ($GLOBALS['__DDLESS_RAW_INPUT__'] ?? '') : $this->buffer;
             $data = substr($dataSource, $this->position, $count);
             $this->position += strlen($data);
             return $data;
@@ -34,7 +38,7 @@ if (!class_exists('DDLessPhpInputStreamTestDouble')) {
 
         public function stream_eof()
         {
-            $dataSource = $GLOBALS['__DDLESS_RAW_INPUT__'] ?? '';
+            $dataSource = $this->isInput ? ($GLOBALS['__DDLESS_RAW_INPUT__'] ?? '') : $this->buffer;
             return $this->position >= strlen($dataSource);
         }
 
@@ -45,7 +49,7 @@ if (!class_exists('DDLessPhpInputStreamTestDouble')) {
 
         public function stream_seek($offset, $whence = SEEK_SET)
         {
-            $dataSource = $GLOBALS['__DDLESS_RAW_INPUT__'] ?? '';
+            $dataSource = $this->isInput ? ($GLOBALS['__DDLESS_RAW_INPUT__'] ?? '') : $this->buffer;
             $length = strlen($dataSource);
 
             switch ($whence) {
@@ -62,13 +66,39 @@ if (!class_exists('DDLessPhpInputStreamTestDouble')) {
 
         public function stream_stat()
         {
-            return [];
+            $size = $this->isInput ? strlen($GLOBALS['__DDLESS_RAW_INPUT__'] ?? '') : strlen($this->buffer);
+            return ['size' => $size];
         }
 
         public function stream_write($data)
         {
-            // This MUST NOT modify __DDLESS_RAW_INPUT__
-            return strlen($data);
+            if ($this->isInput) {
+                // This MUST NOT modify __DDLESS_RAW_INPUT__
+                return strlen($data);
+            }
+
+            $len = strlen($data);
+            $before = substr($this->buffer, 0, $this->position);
+            $after = substr($this->buffer, $this->position + $len);
+            $this->buffer = $before . $data . $after;
+            $this->position += $len;
+            return $len;
+        }
+
+        public function stream_truncate(int $newSize)
+        {
+            if ($this->isInput) {
+                return false;
+            }
+            if ($newSize < strlen($this->buffer)) {
+                $this->buffer = substr($this->buffer, 0, $newSize);
+            } else {
+                $this->buffer = str_pad($this->buffer, $newSize, "\0");
+            }
+            if ($this->position > $newSize) {
+                $this->position = $newSize;
+            }
+            return true;
         }
     }
 }
@@ -154,6 +184,145 @@ test('stream_write returns correct byte count for multi-byte strings', function 
     $utf8Data = 'café résumé naïve';
     $written = $stream->stream_write($utf8Data);
     assert_eq(strlen($utf8Data), $written, 'returns byte length, not character length');
+});
+
+// ============================================================================
+// Tests: php://temp and php://memory — Guzzle outgoing request compatibility
+// ============================================================================
+
+section('DDLessPhpInputStream — php://temp write/read (Guzzle pattern)');
+
+test('php://temp write then read returns written data', function () {
+    $GLOBALS['__DDLESS_RAW_INPUT__'] = 'incoming-request-body';
+
+    $stream = new DDLessPhpInputStreamTestDouble();
+    $stream->stream_open('php://temp', 'r+', 0, $opened);
+
+    $payload = '{"action":"create","name":"test"}';
+    $stream->stream_write($payload);
+
+    // Rewind and read back — must get what was written, NOT __DDLESS_RAW_INPUT__
+    $stream->stream_seek(0);
+    $result = $stream->stream_read(4096);
+
+    assert_eq($payload, $result, 'php://temp must return written data, not raw input');
+});
+
+test('php://temp simulates full Guzzle request body flow', function () {
+    $GLOBALS['__DDLESS_RAW_INPUT__'] = '{"original":"incoming"}';
+
+    // Guzzle opens php://temp, writes the outgoing body, rewinds, reads back
+    $stream = new DDLessPhpInputStreamTestDouble();
+    $stream->stream_open('php://temp', 'r+', 0, $opened);
+
+    $outgoingBody = '{"event":"webhook","data":{"id":42}}';
+    $stream->stream_write($outgoingBody);
+
+    $stream->stream_seek(0);
+    $readBack = '';
+    while (!$stream->stream_eof()) {
+        $readBack .= $stream->stream_read(8192);
+    }
+
+    assert_eq($outgoingBody, $readBack, 'full read after rewind must match written body');
+    assert_eq('{"original":"incoming"}', $GLOBALS['__DDLESS_RAW_INPUT__'], 'raw input must be untouched');
+});
+
+test('php://memory works the same as php://temp', function () {
+    $GLOBALS['__DDLESS_RAW_INPUT__'] = 'should-not-appear';
+
+    $stream = new DDLessPhpInputStreamTestDouble();
+    $stream->stream_open('php://memory', 'r+', 0, $opened);
+
+    $data = 'memory-buffer-content';
+    $stream->stream_write($data);
+    $stream->stream_seek(0);
+    $result = $stream->stream_read(4096);
+
+    assert_eq($data, $result);
+});
+
+test('php://temp multiple writes accumulate correctly', function () {
+    $stream = new DDLessPhpInputStreamTestDouble();
+    $stream->stream_open('php://temp', 'r+', 0, $opened);
+
+    $stream->stream_write('{"name":');
+    $stream->stream_write('"test"}');
+
+    $stream->stream_seek(0);
+    $result = $stream->stream_read(4096);
+
+    assert_eq('{"name":"test"}', $result);
+});
+
+test('php://temp position advances correctly with tell', function () {
+    $stream = new DDLessPhpInputStreamTestDouble();
+    $stream->stream_open('php://temp', 'r+', 0, $opened);
+
+    assert_eq(0, $stream->stream_tell());
+    $stream->stream_write('hello');
+    assert_eq(5, $stream->stream_tell());
+    $stream->stream_write(' world');
+    assert_eq(11, $stream->stream_tell());
+});
+
+test('php://temp seek SEEK_END works', function () {
+    $stream = new DDLessPhpInputStreamTestDouble();
+    $stream->stream_open('php://temp', 'r+', 0, $opened);
+
+    $stream->stream_write('abcdef');
+    $stream->stream_seek(-3, SEEK_END);
+    $result = $stream->stream_read(3);
+
+    assert_eq('def', $result);
+});
+
+test('php://temp stat returns correct size', function () {
+    $stream = new DDLessPhpInputStreamTestDouble();
+    $stream->stream_open('php://temp', 'r+', 0, $opened);
+
+    $stat = $stream->stream_stat();
+    assert_eq(0, $stat['size'], 'empty buffer has size 0');
+
+    $stream->stream_write('12345');
+    $stat = $stream->stream_stat();
+    assert_eq(5, $stat['size'], 'size matches written data');
+});
+
+test('php://input still reads from __DDLESS_RAW_INPUT__ (unchanged behavior)', function () {
+    $GLOBALS['__DDLESS_RAW_INPUT__'] = '{"incoming":"data"}';
+
+    $stream = new DDLessPhpInputStreamTestDouble();
+    $stream->stream_open('php://input', 'r', 0, $opened);
+    $result = $stream->stream_read(4096);
+
+    assert_eq('{"incoming":"data"}', $result);
+});
+
+test('php://input write is still no-op', function () {
+    $GLOBALS['__DDLESS_RAW_INPUT__'] = 'original';
+
+    $stream = new DDLessPhpInputStreamTestDouble();
+    $stream->stream_open('php://input', 'w', 0, $opened);
+    $stream->stream_write('overwrite-attempt');
+
+    assert_eq('original', $GLOBALS['__DDLESS_RAW_INPUT__']);
+});
+
+test('php://temp with binary data preserves bytes', function () {
+    $binary = '';
+    for ($i = 0; $i < 256; $i++) {
+        $binary .= chr($i);
+    }
+
+    $stream = new DDLessPhpInputStreamTestDouble();
+    $stream->stream_open('php://temp', 'r+', 0, $opened);
+
+    $stream->stream_write($binary);
+    $stream->stream_seek(0);
+    $result = $stream->stream_read(512);
+
+    assert_eq($binary, $result, 'binary data must survive write/read round-trip');
 });
 
 // ============================================================================

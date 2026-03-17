@@ -36,16 +36,20 @@ if (!class_exists('DDLessPhpInputStream')) {
     {
         public $context;
         private int $position = 0;
+        private bool $isInput = false;
+        private string $buffer = '';
 
         public function stream_open($path, $mode, $options, &$opened_path)
         {
             $this->position = 0;
+            $this->isInput = ($path === 'php://input');
+            $this->buffer = '';
             return true;
         }
 
         public function stream_read($count)
         {
-            $dataSource = $GLOBALS['__DDLESS_RAW_INPUT__'] ?? '';
+            $dataSource = $this->isInput ? ($GLOBALS['__DDLESS_RAW_INPUT__'] ?? '') : $this->buffer;
             $data = substr($dataSource, $this->position, $count);
             $this->position += strlen($data);
             return $data;
@@ -53,7 +57,7 @@ if (!class_exists('DDLessPhpInputStream')) {
 
         public function stream_eof()
         {
-            $dataSource = $GLOBALS['__DDLESS_RAW_INPUT__'] ?? '';
+            $dataSource = $this->isInput ? ($GLOBALS['__DDLESS_RAW_INPUT__'] ?? '') : $this->buffer;
             return $this->position >= strlen($dataSource);
         }
 
@@ -64,7 +68,7 @@ if (!class_exists('DDLessPhpInputStream')) {
 
         public function stream_seek($offset, $whence = SEEK_SET)
         {
-            $dataSource = $GLOBALS['__DDLESS_RAW_INPUT__'] ?? '';
+            $dataSource = $this->isInput ? ($GLOBALS['__DDLESS_RAW_INPUT__'] ?? '') : $this->buffer;
             $length = strlen($dataSource);
 
             switch ($whence) {
@@ -91,14 +95,39 @@ if (!class_exists('DDLessPhpInputStream')) {
 
         public function stream_stat()
         {
-            return [];
+            $size = $this->isInput ? strlen($GLOBALS['__DDLESS_RAW_INPUT__'] ?? '') : strlen($this->buffer);
+            return ['size' => $size];
         }
 
         public function stream_write($data)
         {
-            // php://input is read-only in native PHP. Accept writes silently
-            // without modifying __DDLESS_RAW_INPUT__ to prevent corruption
-            return strlen($data);
+            if ($this->isInput) {
+                return strlen($data);
+            }
+
+            // For php://temp, php://memory, etc. — real read/write buffer
+            $len = strlen($data);
+            $before = substr($this->buffer, 0, $this->position);
+            $after = substr($this->buffer, $this->position + $len);
+            $this->buffer = $before . $data . $after;
+            $this->position += $len;
+            return $len;
+        }
+
+        public function stream_truncate(int $newSize)
+        {
+            if ($this->isInput) {
+                return false;
+            }
+            if ($newSize < strlen($this->buffer)) {
+                $this->buffer = substr($this->buffer, 0, $newSize);
+            } else {
+                $this->buffer = str_pad($this->buffer, $newSize, "\0");
+            }
+            if ($this->position > $newSize) {
+                $this->position = $newSize;
+            }
+            return true;
         }
     }
 }
