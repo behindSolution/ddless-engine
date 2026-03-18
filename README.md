@@ -22,6 +22,9 @@ DDLess uses AST-based analysis (via [nikic/PHP-Parser](https://github.com/nikic/
 | `src/task_trigger.php` | Entry point for task/command debugging |
 | `src/cli_trigger.php` | Entry point for CLI script debugging |
 | `src/frameworks/laravel/` | Laravel-specific request handling, method execution, task runner |
+| `src/frameworks/symfony/` | Symfony request handling, method execution, task runner |
+| `src/frameworks/codeigniter/` | CodeIgniter 4 request handling, method execution, task runner |
+| `src/frameworks/tempest/` | Tempest request handling, method execution, task runner |
 | `src/frameworks/php/` | Vanilla PHP request handling, method execution, task runner |
 | `src/vendor-internal/` | Bundled PHP-Parser (no Composer required) |
 
