@@ -2483,7 +2483,7 @@ class DDLessSafeIncludeWrapper
     {
         if (self::$registered) return;
         @stream_wrapper_unregister('file');
-        stream_wrapper_register('file', self::class, STREAM_IS_URL);
+        stream_wrapper_register('file', self::class, 0);
         self::$registered = true;
     }
 
