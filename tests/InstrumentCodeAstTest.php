@@ -277,6 +277,138 @@ function foo() {
     }
 });
 
+test('braceless if injects step_check into condition', function () {
+    $code = '<?php
+function foo($a) {
+    if ( empty($a) || $a === "no" )
+        $a = false;
+    else
+        $a = true;
+    return $a;
+}';
+    $result = ddless_instrument_code_with_ast($code, '/test/file.php', 'file.php');
+    assert_not_null($result);
+
+    // Must NOT produce a parse error — the instrumented code must be valid PHP
+    $tokens = @token_get_all($result);
+    assert_true(is_array($tokens), 'instrumented code should tokenize without error');
+
+    // The if condition should have step_check injected (like elseif pattern)
+    assert_contains($result, '!\\ddless_step_check(', 'step_check in braceless if condition');
+    assert_contains($result, '&& (', 'original condition wrapped');
+
+    // Body lines ($a = false / $a = true) should NOT have step_check
+    $resultLines = explode("\n", $result);
+    foreach ($resultLines as $line) {
+        if (str_contains($line, '$a = false') || str_contains($line, '$a = true')) {
+            assert_not_contains($line, 'ddless_step_check',
+                'braceless body should not be instrumented: ' . trim($line));
+        }
+    }
+});
+
+test('braceless while injects step_check into condition', function () {
+    $code = '<?php
+function foo($items) {
+    $i = 0;
+    while ($i < count($items))
+        $i++;
+    return $i;
+}';
+    $result = ddless_instrument_code_with_ast($code, '/test/file.php', 'file.php');
+    assert_not_null($result);
+
+    assert_contains($result, '!\\ddless_step_check(', 'step_check in braceless while condition');
+
+    $resultLines = explode("\n", $result);
+    foreach ($resultLines as $line) {
+        if (str_contains($line, '$i++')) {
+            assert_not_contains($line, 'ddless_step_check',
+                'braceless while body should not be instrumented');
+        }
+    }
+});
+
+test('braced if still uses normal injection before line', function () {
+    $code = '<?php
+function foo($a) {
+    if ($a) {
+        $b = 1;
+    }
+    return $a;
+}';
+    $result = ddless_instrument_code_with_ast($code, '/test/file.php', 'file.php');
+    assert_not_null($result);
+
+    $resultLines = explode("\n", $result);
+    $hasCheckBeforeIf = false;
+    for ($i = 0; $i < count($resultLines); $i++) {
+        if (str_contains($resultLines[$i], 'ddless_step_check') && str_contains($resultLines[$i], '// DDLESS_BP')) {
+            if (isset($resultLines[$i + 1]) && str_contains($resultLines[$i + 1], 'if ($a) {')) {
+                $hasCheckBeforeIf = true;
+            }
+        }
+    }
+    assert_true($hasCheckBeforeIf, 'braced if should have step_check BEFORE (not in condition)');
+});
+
+test('braced if with trailing comment is NOT treated as braceless', function () {
+    $code = '<?php
+function foo($did_just_catch) {
+    if ( $did_just_catch ) { // @phpstan-ignore if.alwaysFalse (The variable is set in the catch block below.)
+        $level = E_USER_ERROR;
+    }
+    return $level;
+}';
+    $result = ddless_instrument_code_with_ast($code, '/test/template.php', 'template.php');
+    assert_not_null($result);
+
+    // Must NOT inject into condition — this is a braced if
+    $resultLines = explode("\n", $result);
+    foreach ($resultLines as $line) {
+        if (str_contains($line, '$did_just_catch')) {
+            assert_not_contains($line, '!\\ddless_step_check(',
+                'braced if with comment should NOT get condition injection');
+            break;
+        }
+    }
+
+    // Must be valid PHP
+    $tmpFile = tempnam(sys_get_temp_dir(), 'ddless_test_');
+    file_put_contents($tmpFile, $result);
+    $output = [];
+    $exitCode = 0;
+    exec('php -l ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
+    @unlink($tmpFile);
+    assert_eq(0, $exitCode, 'instrumented code must be valid PHP: ' . implode("\n", $output));
+});
+
+test('braceless if/else with WordPress deprecated.php pattern', function () {
+    $code = '<?php
+function adjacent_post_link( $format, $link, $in_same_cat = false, $excluded_categories = \'\' ) {
+    if ( empty($in_same_cat) || \'no\' == $in_same_cat )
+        $in_same_cat = false;
+    else
+        $in_same_cat = true;
+
+    if ( empty($excluded_categories) || \'no\' == $excluded_categories )
+        $excluded_categories = \'\';
+
+    return $in_same_cat;
+}';
+    $result = ddless_instrument_code_with_ast($code, '/test/deprecated.php', 'deprecated.php');
+    assert_not_null($result);
+
+    // Validate the instrumented code is parseable PHP
+    $tmpFile = tempnam(sys_get_temp_dir(), 'ddless_test_');
+    file_put_contents($tmpFile, $result);
+    $output = [];
+    $exitCode = 0;
+    exec('php -l ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
+    @unlink($tmpFile);
+    assert_eq(0, $exitCode, 'instrumented code must be valid PHP: ' . implode("\n", $output));
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }
