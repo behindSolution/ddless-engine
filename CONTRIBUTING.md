@@ -5,7 +5,11 @@ Thanks for your interest in contributing! This document explains how to get star
 ## Getting Started
 
 1. Fork this repository
-2. Clone your fork locally
+2. Clone your fork inside your PHP project (or anywhere with PHP available):
+   ```bash
+   cd /var/www/html          # your project root
+   git clone https://github.com/YOUR_USER/ddless-engine.git .ddless
+   ```
 3. Make sure tests pass before making changes:
    ```bash
    php tests/run-all.php
@@ -36,13 +40,135 @@ src/
   cli_trigger.php        # CLI debug entry point
   frameworks/
     laravel/             # Laravel-specific handlers
-    php/                 # Vanilla PHP handlers
+    symfony/             # Symfony-specific handlers
+    codeigniter/         # CodeIgniter 4 handlers
+    tempest/             # Tempest handlers
+    wordpress/           # WordPress handlers
+    php/                 # Vanilla PHP handlers (minimal reference)
+  playground/            # Interactive terminal test suite
   vendor-internal/       # Bundled PHP-Parser (do not modify)
 tests/
   bootstrap.php          # Test runner and assertions
   run-all.php            # Runs all test files
   *Test.php              # Individual test files
 ```
+
+## Playground — Testing Your Changes
+
+The playground lets you test the debug engine and framework integrations directly
+from the terminal, without the DDLess desktop app. Use it to validate your changes
+before submitting a PR.
+
+### Setup
+
+Clone ddless-engine inside a real PHP project (or use an existing one):
+
+```bash
+# Inside a Laravel project, for example
+cd /var/www/html
+git clone https://github.com/YOUR_USER/ddless-engine.git .ddless
+```
+
+The playground is at `src/playground/`. Run everything from the `.ddless/` directory:
+
+```bash
+cd .ddless
+```
+
+### Step 1 — Engine Test
+
+Validates the core debug engine (breakpoints, stepping, variable inspection).
+Point to any PHP file in your project:
+
+```bash
+# Inline code — quick sanity check
+php src/playground/test_trigger.php --code '$x = 1; $y = 2; echo $x + $y;' --bp 2
+
+# Real project file
+php src/playground/test_trigger.php --file /var/www/html/app/Services/OrderService.php --bp 32
+
+# Multiple breakpoints
+php src/playground/test_trigger.php --file /var/www/html/app/Services/OrderService.php --bp 32 --bp 45
+```
+
+If this fails on your project file, the issue is in the project (autoload, syntax), not DDLess.
+
+### Step 2 — Method Test
+
+Validates a framework's `method_executor.php` — resolves a class from the container
+and calls a method:
+
+```bash
+php src/playground/test_trigger.php --test method --framework laravel \
+  --class "App\Services\OrderService" --method calculate
+
+# With parameters
+php src/playground/test_trigger.php --test method --framework laravel \
+  --class "App\Services\OrderService" --method calculate \
+  --params-file test_params.php
+
+# With breakpoints
+php src/playground/test_trigger.php --test method --framework laravel \
+  --class "App\Services\OrderService" --method calculate \
+  --bp app/Services/OrderService.php:45
+```
+
+### Step 3 — Task Test
+
+Validates a framework's `task_runner.php` — executes arbitrary PHP code with
+framework context:
+
+```bash
+php src/playground/test_trigger.php --test task --framework laravel \
+  -c '$this->info("Users: " . User::count());' \
+  -u "App\Models\User"
+
+# From a file
+php src/playground/test_trigger.php --test task --framework laravel \
+  --file my_task.php
+```
+
+### Step 4 — HTTP Test
+
+Validates a framework's `http_request.php` — sends real HTTP requests through
+the full pipeline:
+
+**Terminal 1:**
+```bash
+DDLESS_FRAMEWORK=laravel php -S localhost:8080 src/playground/test_trigger.php
+
+# With breakpoints
+DDLESS_FRAMEWORK=laravel DDLESS_BP="app/Http/Controllers/OrderController.php:45" \
+  php -S localhost:8080 src/playground/test_trigger.php
+```
+
+**Terminal 2:**
+```bash
+curl http://localhost:8080/api/orders
+curl -X POST http://localhost:8080/api/orders \
+  -H "Content-Type: application/json" -d '{"item":"test"}'
+```
+
+Each step validates a layer. If one fails, you know exactly where to look.
+See `src/playground/README.md` for full details and all options.
+
+## Adding a New Framework
+
+To add support for a new framework (e.g. CakePHP):
+
+1. Create `src/frameworks/cakephp/` with three files:
+
+   | File | Purpose |
+   |------|---------|
+   | `method_executor.php` | Resolve class from container, call method, output result |
+   | `task_runner.php` | Boot framework, eval user code with `DdlessTask` context |
+   | `http_request.php` | Process HTTP request through full middleware pipeline |
+
+2. Use `src/frameworks/php/` as a minimal reference and `src/frameworks/laravel/` as a full example.
+
+3. Test with the playground (Steps 2, 3, 4 above).
+
+4. See `src/playground/README.md` for input/output protocols of each handler.
 
 ## Writing Tests
 
@@ -74,8 +200,9 @@ Available assertions: `assert_eq`, `assert_true`, `assert_false`, `assert_null`,
 
 1. Create a branch from `main`
 2. Write or update tests for your changes
-3. Make sure all tests pass: `php tests/run-all.php`
-4. Open a Pull Request with a clear description of what you changed and why
+3. Test with the playground to validate framework integrations
+4. Make sure all tests pass: `php tests/run-all.php`
+5. Open a Pull Request with a clear description of what you changed and why
 
 ## What Not to Modify
 

@@ -1947,6 +1947,11 @@ function ddless_handle_breakpoint(
         'watchResults' => !empty($watchResults) ? $watchResults : null,
     ];
 
+    // Terminal mode: interactive debugging via STDIN/STDERR (used by test_trigger.php)
+    if (isset($GLOBALS['__DDLESS_TERMINAL_HANDLER__'])) {
+        $command = strtolower(($GLOBALS['__DDLESS_TERMINAL_HANDLER__'])($payload, $file) ?? 'continue');
+    } else {
+
     if (!ddless_write_breakpoint_state($payload)) {
         ddless_log("[ddless] Failed to write breakpoint state, continuing execution\n");
         return;
@@ -2063,6 +2068,8 @@ function ddless_handle_breakpoint(
 
         break;
     }
+
+    } // end else (non-terminal mode)
 
     if ($rawVariables !== $originalRawVariables) {
         $GLOBALS['__DDLESS_MODIFIED_VARS__'] = $rawVariables;
@@ -2230,6 +2237,11 @@ function ddless_find_all_php_files(string $directory): array
 
 function ddless_emit_progress(int $current, int $total, string $currentFile): void
 {
+    // Terminal mode: suppress progress markers (no Electron to consume them)
+    if (isset($GLOBALS['__DDLESS_TERMINAL_HANDLER__'])) {
+        return;
+    }
+
     $percent = $total > 0 ? round(($current / $total) * 100) : 0;
     $payload = json_encode([
         'type' => 'instrumentation_progress',
@@ -2238,7 +2250,7 @@ function ddless_emit_progress(int $current, int $total, string $currentFile): vo
         'percent' => $percent,
         'currentFile' => $currentFile,
     ], JSON_UNESCAPED_SLASHES);
-    
+
     fwrite(STDOUT, "__DDLESS_PROGRESS__:{$payload}\n");
     fflush(STDOUT);
 }
