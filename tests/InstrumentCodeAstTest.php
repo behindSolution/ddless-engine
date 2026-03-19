@@ -409,6 +409,63 @@ function adjacent_post_link( $format, $link, $in_same_cat = false, $excluded_cat
     assert_eq(0, $exitCode, 'instrumented code must be valid PHP: ' . implode("\n", $output));
 });
 
+test('does not inject between PHP attribute and function declaration', function () {
+    $code = '<?php
+class ChildRepo extends BaseRepo
+{
+    #[\Override]
+    public function findAll(): array { return [1, 2, 3]; }
+}';
+    $result = ddless_instrument_code_with_ast($code, '/test/file.php', 'file.php');
+    // May be null (no instrumentable lines inside single-line body) or valid PHP
+    if ($result !== null) {
+        // Must NOT have step_check between #[\Override] and public function
+        $lines = explode("\n", $result);
+        for ($i = 0; $i < count($lines); $i++) {
+            if (str_contains($lines[$i], '#[\\Override]') || str_contains($lines[$i], '#[\Override]')) {
+                $next = $lines[$i + 1] ?? '';
+                assert_true(
+                    !str_contains($next, 'ddless_step_check'),
+                    'step_check must not be injected between attribute and function'
+                );
+            }
+        }
+
+        // Validate the instrumented code is parseable PHP
+        $tmpFile = tempnam(sys_get_temp_dir(), 'ddless_test_');
+        file_put_contents($tmpFile, $result);
+        $output = [];
+        $exitCode = 0;
+        exec('php -l ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
+        @unlink($tmpFile);
+        assert_eq(0, $exitCode, 'code with #[Override] must be valid PHP: ' . implode("\n", $output));
+    }
+});
+
+test('does not inject between multi-line attribute and declaration', function () {
+    $code = '<?php
+class Controller
+{
+    #[Route("/api/test", methods: ["POST"])]
+    public function handle(): array
+    {
+        $data = request()->all();
+        return $data;
+    }
+}';
+    $result = ddless_instrument_code_with_ast($code, '/test/file.php', 'file.php');
+    assert_not_null($result);
+
+    // Validate the instrumented code is parseable PHP
+    $tmpFile = tempnam(sys_get_temp_dir(), 'ddless_test_');
+    file_put_contents($tmpFile, $result);
+    $output = [];
+    $exitCode = 0;
+    exec('php -l ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
+    @unlink($tmpFile);
+    assert_eq(0, $exitCode, 'code with #[Route] must be valid PHP: ' . implode("\n", $output));
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }

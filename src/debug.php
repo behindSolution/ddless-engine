@@ -711,6 +711,22 @@ function ddless_instrument_code_with_ast(string $code, string $absolutePath, str
             continue;
         }
 
+        // Skip if the previous non-empty line is a PHP attribute (#[...]).
+        // Injecting between an attribute and its target declaration causes
+        // "unexpected ..., expecting function" parse errors.
+        $isAfterAttribute = false;
+        for ($ai = $idx - 1; $ai >= 0; $ai--) {
+            $attrTrimmed = trim($lines[$ai]);
+            if ($attrTrimmed === '') continue;
+            if (preg_match('/^#\[/', $attrTrimmed)) {
+                $isAfterAttribute = true;
+            }
+            break;
+        }
+        if ($isAfterAttribute) {
+            continue;
+        }
+
         preg_match('/^(\s*)/', $lineContent, $m);
         $indent = $m[1] ?? '';
 
