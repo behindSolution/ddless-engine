@@ -481,12 +481,31 @@ try {
 
     ddless_task_done(true, $taskStartTime);
 } catch (Throwable $e) {
-    ddless_task_emit('error', [
+    $isEvalError = str_contains($e->getFile(), "eval()'d code");
+
+    if ($isEvalError) {
+        ddless_task_emit('error', [
+            'message' => $e->getMessage(),
+        ]);
+        ddless_task_done(false, $taskStartTime, $e->getMessage());
+        exit(1);
+    }
+
+    $exceptionData = [
+        'exceptionClass' => get_class($e),
         'message' => $e->getMessage(),
-    ]);
-    ddless_task_emit('line', [
-        'message' => 'at ' . $e->getFile() . ':' . $e->getLine(),
-    ]);
-    ddless_task_done(false, $taskStartTime, $e->getMessage());
-    exit(1);
+        'exceptionCode' => $e->getCode(),
+        'exceptionFile' => $e->getFile(),
+        'exceptionLine' => $e->getLine(),
+    ];
+
+    if (method_exists($e, 'errors')) {
+        $exceptionData['errors'] = $e->errors();
+    }
+    if (method_exists($e, 'getStatusCode')) {
+        $exceptionData['statusCode'] = $e->getStatusCode();
+    }
+
+    ddless_task_emit('exception', $exceptionData);
+    ddless_task_done(true, $taskStartTime);
 }

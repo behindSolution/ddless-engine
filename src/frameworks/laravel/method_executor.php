@@ -601,12 +601,64 @@ try {
     ]);
     
 } catch (Throwable $e) {
-    ddless_method_error('Error executing: ' . $e->getMessage(), [
-        'class' => $targetClass,
-        'method' => $targetMethod,
-        'exception' => get_class($e),
+    // Application exception — treat as execution result, not ddless error.
+    // The method ran but threw (e.g. ValidationException, ModelNotFoundException).
+    $endTime = microtime(true);
+    $endMemory = memory_get_usage(true);
+
+    $exceptionInfo = [
+        'class' => get_class($e),
+        'message' => $e->getMessage(),
+        'code' => $e->getCode(),
         'file' => $e->getFile(),
         'line' => $e->getLine(),
-        'trace' => array_slice($e->getTrace(), 0, 10),
+    ];
+
+    // Extract extra data from well-known exception types
+    if (method_exists($e, 'errors')) {
+        $exceptionInfo['errors'] = $e->errors();
+    }
+    if (method_exists($e, 'getStatusCode')) {
+        $exceptionInfo['statusCode'] = $e->getStatusCode();
+    }
+    if (method_exists($e, 'getResponse') && $e->getResponse() !== null) {
+        try {
+            $resp = $e->getResponse();
+            if (method_exists($resp, 'getStatusCode')) {
+                $exceptionInfo['statusCode'] = $resp->getStatusCode();
+            }
+        } catch (\Throwable $_) {}
+    }
+
+    // Filter trace to show only application frames (skip vendor/framework internals)
+    $appTrace = [];
+    foreach ($e->getTrace() as $frame) {
+        $file = $frame['file'] ?? '';
+        if ($file && !str_contains($file, '/vendor/') && !str_contains($file, '\\vendor\\')) {
+            $appTrace[] = [
+                'file' => $frame['file'] ?? '',
+                'line' => $frame['line'] ?? 0,
+                'function' => ($frame['class'] ?? '') . ($frame['type'] ?? '') . ($frame['function'] ?? ''),
+            ];
+            if (count($appTrace) >= 5) break;
+        }
+    }
+    if (!empty($appTrace)) {
+        $exceptionInfo['trace'] = $appTrace;
+    }
+
+    ddless_method_success([
+        'class' => isset($isFunction) && $isFunction ? null : ($targetClass ?? null),
+        'method' => $targetMethod ?? '',
+        'type' => (isset($isFunction) && $isFunction) ? 'function' : 'method',
+        'static' => $isStatic ?? false,
+        'parameters' => isset($methodParameters) ? ddless_serialize_value($methodParameters) : [],
+        'result' => null,
+        'exception' => $exceptionInfo,
+        'metrics' => [
+            'durationMs' => isset($startTime) ? round(($endTime - $startTime) * 1000, 2) : 0,
+            'memoryUsedBytes' => isset($startMemory) ? ($endMemory - $startMemory) : 0,
+            'memoryPeakBytes' => memory_get_peak_usage(true),
+        ],
     ]);
 }
