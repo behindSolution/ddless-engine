@@ -98,9 +98,8 @@ if ($opts['file'] === null && $opts['code'] === null) {
 
 // ─── Resolve script ─────────────────────────────────────────────────────────
 
-if (!defined('DDLESS_PROJECT_ROOT')) {
-    define('DDLESS_PROJECT_ROOT', $projectRoot);
-}
+// Note: DDLESS_PROJECT_ROOT is defined later (after --boot) so the boot file
+// can set it to the actual project root (e.g. Laravel project, not ddless-engine)
 
 $tempCodeFile = null;
 $scriptPath = null;
@@ -191,6 +190,12 @@ try {
         }
         fwrite(STDERR, CLR_DIM . "  Booting..." . CLR_RESET . "\n");
         require $bootPath;
+    }
+
+    // Define project root — boot.php can define it first to point to the actual
+    // project (e.g. /var/www/html) instead of the ddless-engine directory
+    if (!defined('DDLESS_PROJECT_ROOT')) {
+        define('DDLESS_PROJECT_ROOT', $projectRoot);
     }
 
     // Load engine after boot — stream wrapper must not intercept framework bootstrap

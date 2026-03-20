@@ -81,26 +81,42 @@ Follow this order. Each step validates a layer before moving to the next.
 ### Step 1 — Engine Test (debug engine)
 
 Validates that breakpoints, stepping, and variable inspection work.
+This is the first test a contributor should run when adding a new framework.
+
+#### 1a. Quick sanity check (no framework)
 
 ```bash
-# Quick sanity check — inline code, no framework
 php playground/test_trigger.php --code '$x = 1; $y = 2; $z = $x + $y; echo $z;' --bp 2
-
-# With framework context — boot first, then run your script
-php playground/test_trigger.php --boot boot.php --file test_orders.php --bp 3
 ```
 
-The `--boot` flag lets you boot your framework before running the target script.
-Create a `boot.php` at your project root:
+If this works, the core debug engine is functional.
+
+#### 1b. With framework context
+
+Use `--boot` to boot your framework before running the target script. The boot
+runs **without** the stream wrapper, so the framework loads cleanly. Then the
+debug engine is loaded and your test script runs with breakpoints active.
+
+**Create two files inside the ddless-engine directory (`.ddless/`):**
+
+`boot.php` — boots the framework:
 
 ```php
 <?php
 // boot.php — Laravel example
-$app = require __DIR__ . '/bootstrap/app.php';
+// Set project root to the actual project (not ddless-engine)
+define('DDLESS_PROJECT_ROOT', dirname(__DIR__));
+require __DIR__ . '/../vendor/autoload.php';
+$app = require __DIR__ . '/../bootstrap/app.php';
 $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 ```
 
-Then write a script that uses the framework:
+> **Important:** `DDLESS_PROJECT_ROOT` must point to the actual project root so
+> that breakpoint paths like `app/Services/OrderService.php:38` resolve correctly.
+> Paths use `__DIR__ . '/../'` because the files live inside `.ddless/`, one level
+> below the project root.
+
+`test_orders.php` — what you want to test:
 
 ```php
 <?php
@@ -110,15 +126,25 @@ $result = $service->calculate(42);
 var_dump($result);
 ```
 
+**Run with breakpoints inside the service:**
+
 ```bash
-php playground/test_trigger.php --boot boot.php --file test_orders.php --bp 3 --bp 4
+php playground/test_trigger.php --boot boot.php --file test_orders.php \
+  --bp app/Services/OrderService.php:38
 ```
 
-This is the first test a contributor should run when adding a new framework.
-If the boot works and breakpoints hit, you understand how the framework boots —
-and you can replicate that in `method_executor.php`, `task_runner.php`, and `http_request.php`.
+The flow:
+1. `boot.php` runs **without** stream wrapper — framework boots safely
+2. Debug engine loads — stream wrapper registered
+3. `test_orders.php` runs — calls the service, autoloader loads `OrderService.php`
+   through the stream wrapper, breakpoint at line 38 hits
 
-At the breakpoint, use the interactive commands:
+If the boot works and breakpoints hit inside framework code, you understand how
+the framework boots — and you can replicate that in `method_executor.php`,
+`task_runner.php`, and `http_request.php`.
+
+#### Breakpoint commands
+
 - `c` — continue to next breakpoint
 - `n` — step over (next line)
 - `s` — step into function
@@ -127,7 +153,7 @@ At the breakpoint, use the interactive commands:
 
 **What to verify:**
 - Framework boots without errors
-- Breakpoint stops at the correct line
+- Breakpoint stops at the correct line inside the framework code
 - Source code is displayed with the current line highlighted (not instrumented code)
 - Variables show correct values (framework objects, services, etc.)
 - Step commands work as expected

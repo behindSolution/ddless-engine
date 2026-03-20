@@ -78,23 +78,43 @@ cd .ddless
 ### Step 1 — Engine Test
 
 Validates the core debug engine (breakpoints, stepping, variable inspection).
-Use `--boot` to boot your framework first, then run a script with breakpoints:
 
 ```bash
 # Quick sanity check — no framework
 php src/playground/test_trigger.php --code '$x = 1; $y = 2; echo $x + $y;' --bp 2
-
-# With framework — create a boot.php at your project root:
-#   <?php
-#   $app = require __DIR__ . '/bootstrap/app.php';
-#   $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-
-# Then run a script that uses the framework:
-php src/playground/test_trigger.php --boot boot.php --file test_orders.php --bp 3
 ```
 
+To test with a framework, create two files inside the ddless-engine directory:
+
+**boot.php** — boots the framework (runs without stream wrapper):
+```php
+<?php
+define('DDLESS_PROJECT_ROOT', dirname(__DIR__));  // points to actual project root
+require __DIR__ . '/../vendor/autoload.php';
+$app = require __DIR__ . '/../bootstrap/app.php';
+$app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+```
+
+**test_orders.php** — what you want to test:
+```php
+<?php
+$service = app(\App\Services\OrderService::class);
+$result = $service->calculate(42);
+var_dump($result);
+```
+
+```bash
+# Run with breakpoints inside the service code
+php src/playground/test_trigger.php --boot boot.php --file test_orders.php \
+  --bp app/Services/OrderService.php:38
+```
+
+`DDLESS_PROJECT_ROOT` in boot.php must point to your actual project root so that
+breakpoint paths like `app/Services/OrderService.php:38` resolve correctly.
+
 This is the first test when adding a new framework. If the boot works and breakpoints
-hit, you understand the framework bootstrap — and can replicate it in the handlers.
+hit inside framework code, you understand the bootstrap — and can replicate it in
+the handlers.
 
 ### Step 2 — Method Test
 
