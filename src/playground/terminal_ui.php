@@ -39,6 +39,14 @@ function ddless_resolve_paths(): array
     // Layout 1: playground inside .ddless/ (ddless-engine)
     if (is_file($ddlessDir . '/debug.php')) {
         $projectRoot = dirname($ddlessDir);
+
+        // ddless-engine cloned as a subdirectory of the actual project
+        // (e.g. /var/www/html/ddless-engine/src/playground/)
+        // If no composer.json at this level, the real project is one level up
+        if (!is_file($projectRoot . '/composer.json') && is_file(dirname($projectRoot) . '/composer.json')) {
+            $projectRoot = dirname($projectRoot);
+        }
+
         return [
             'ddlessDir'    => $ddlessDir,
             'projectRoot'  => $projectRoot,

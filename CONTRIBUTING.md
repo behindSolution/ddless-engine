@@ -61,19 +61,15 @@ before submitting a PR.
 
 ### Setup
 
-Clone ddless-engine inside a real PHP project (or use an existing one):
+Clone ddless-engine at the root of a real PHP project:
 
 ```bash
-# Inside a Laravel project, for example
 cd /var/www/html
-git clone https://github.com/YOUR_USER/ddless-engine.git .ddless
+git clone https://github.com/YOUR_USER/ddless-engine.git
+cd ddless-engine
 ```
 
-The playground is at `src/playground/`. Run everything from the `.ddless/` directory:
-
-```bash
-cd .ddless
-```
+The playground auto-detects your project root (the parent directory with `composer.json`).
 
 ### Step 1 — Engine Test
 
