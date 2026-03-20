@@ -169,9 +169,6 @@ if (!empty($breakpointMap)) {
 fwrite(STDERR, CLR_DIM . "  Depth: " . CLR_RESET . $opts['depth'] . "\n");
 fwrite(STDERR, CLR_DIM . "  ──────────────────────────────────────────" . CLR_RESET . "\n\n");
 
-// Load engine
-ddless_load_engine($ddlessDir, $projectRoot);
-
 // ─── Execute ─────────────────────────────────────────────────────────────────
 
 function ddless_engine_run_isolated(string $__ddless_script_path__): void
@@ -182,7 +179,7 @@ function ddless_engine_run_isolated(string $__ddless_script_path__): void
 $exitCode = 0;
 
 try {
-    // Boot framework if --boot was provided
+    // Boot framework if --boot was provided (BEFORE engine, so autoload works)
     if ($opts['boot'] !== null) {
         $bootPath = $opts['boot'];
         if (!str_starts_with($bootPath, '/') && !preg_match('/^[A-Za-z]:/', $bootPath)) {
@@ -195,6 +192,9 @@ try {
         fwrite(STDERR, CLR_DIM . "  Booting..." . CLR_RESET . "\n");
         require $bootPath;
     }
+
+    // Load engine after boot — stream wrapper must not intercept framework bootstrap
+    ddless_load_engine($ddlessDir, $projectRoot);
 
     fwrite(STDERR, CLR_DIM . "  Running..." . CLR_RESET . "\n");
     ob_start('ddless_terminal_output_filter');
