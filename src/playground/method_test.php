@@ -222,11 +222,19 @@ putenv('DDLESS_FRAMEWORK=' . $framework);
 
 fwrite(STDERR, CLR_DIM . "  Executing..." . CLR_RESET . "\n");
 
+// Isolate executor scope — prevent playground variables from leaking into
+// get_defined_vars() at breakpoints. The executor reads input from
+// $GLOBALS['__DDLESS_METHOD_INPUT__'] and env vars, not local scope.
+function ddless_method_run_isolated(string $__ddless_executor_path__): void
+{
+    require $__ddless_executor_path__;
+}
+
 // Capture stdout to parse the result JSON
 ob_start();
 
 try {
-    require $executorPath;
+    ddless_method_run_isolated($executorPath);
 } catch (\SystemExit $e) {
     // method_executor calls exit() — we can't prevent that in same process
 } catch (\Throwable $e) {

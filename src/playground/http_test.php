@@ -141,8 +141,16 @@ register_shutdown_function(function () use ($startTime, $hasBreakpoints, $sessio
 
 // ─── Execute handler ────────────────────────────────────────────────────────
 
+// Isolate handler scope — prevent playground variables from leaking into
+// get_defined_vars() at breakpoints. The handler reads from superglobals,
+// $GLOBALS['__DDLESS_RAW_INPUT__'], and env vars.
+function ddless_http_run_isolated(string $__ddless_handler_path__): void
+{
+    require $__ddless_handler_path__;
+}
+
 try {
-    require $handlerPath;
+    ddless_http_run_isolated($handlerPath);
 } catch (\Throwable $e) {
     ddless_display_exception($e);
     http_response_code(500);

@@ -196,13 +196,21 @@ putenv('DDLESS_FRAMEWORK=' . $framework);
 
 fwrite(STDERR, CLR_DIM . "  Executing..." . CLR_RESET . "\n");
 
+// Isolate runner scope — prevent playground variables from leaking into
+// get_defined_vars() at breakpoints. The runner reads input from
+// $GLOBALS['__DDLESS_TASK_INPUT__'] and env vars, not local scope.
+function ddless_task_run_isolated(string $__ddless_runner_path__): void
+{
+    require $__ddless_runner_path__;
+}
+
 // Capture stdout to parse task output markers
 ob_start();
 
 $exitCode = 0;
 
 try {
-    require $runnerPath;
+    ddless_task_run_isolated($runnerPath);
 } catch (\Throwable $e) {
     $exitCode = 1;
 }
