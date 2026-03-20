@@ -425,8 +425,19 @@ function ddless_response_status_text(int $statusCode): ?string
     return $map[$statusCode] ?? null;
 }
 
+// Override CI4's is_cli() BEFORE autoload/bootstrap so CI4 treats this as a web request.
+// CI4's system/Common.php uses `if (! function_exists('is_cli'))` — our definition wins.
+if (!function_exists('is_cli')) {
+    function is_cli(): bool
+    {
+        return false;
+    }
+}
+
 // CodeIgniter 4 Bootstrap
-$projectRoot = dirname(__DIR__, 3);
+$projectRoot = !empty($GLOBALS['__DDLESS_PLAYGROUND__']) && defined('DDLESS_PROJECT_ROOT')
+    ? DDLESS_PROJECT_ROOT
+    : dirname(__DIR__, 3);
 $ddlessDirectory = dirname(__DIR__, 2);
 
 if (!defined('DDLESS_PROJECT_ROOT')) {
@@ -547,7 +558,7 @@ try {
         // CI4 4.5+ uses Boot class
         \CodeIgniter\Boot::bootWeb($paths);
         $app = \Config\Services::codeigniter();
-    } elseif (function_exists('\\Config\\Services::codeigniter')) {
+    } elseif (class_exists('Config\Services')) {
         // CI4 4.x - manual bootstrap
         $app = \Config\Services::codeigniter();
         $app->initialize();
@@ -756,9 +767,12 @@ try {
         'logs' => $logs,
     ];
 
-    $sessionSnapshotPath = ddless_get_session_dir() . DIRECTORY_SEPARATOR . 'last_execution.json';
     $encodedSnapshot = ddless_encode_json($snapshot) . "\n";
-    @file_put_contents($sessionSnapshotPath, $encodedSnapshot);
+
+    if (function_exists('ddless_get_session_dir')) {
+        $sessionSnapshotPath = ddless_get_session_dir() . DIRECTORY_SEPARATOR . 'last_execution.json';
+        @file_put_contents($sessionSnapshotPath, $encodedSnapshot);
+    }
 
     $rootSnapshotPath = $ddlessDirectory . DIRECTORY_SEPARATOR . 'last_execution.json';
     @file_put_contents($rootSnapshotPath, $encodedSnapshot);

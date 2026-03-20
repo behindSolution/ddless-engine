@@ -87,6 +87,9 @@ if (!defined('DDLESS_PROJECT_ROOT')) {
     define('DDLESS_PROJECT_ROOT', $projectRoot);
 }
 
+// Flag for framework handlers to detect playground context
+$GLOBALS['__DDLESS_PLAYGROUND__'] = true;
+
 $hasBreakpoints = !empty($breakpointMap);
 $session = null;
 

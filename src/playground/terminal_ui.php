@@ -11,6 +11,15 @@
  * session management, and output filtering.
  */
 
+// ─── STDERR/STDIN fallback (cli-server SAPI does not define these) ───────────
+
+if (!defined('STDERR')) {
+    define('STDERR', fopen('php://stderr', 'w'));
+}
+if (!defined('STDIN')) {
+    define('STDIN', fopen('php://stdin', 'r'));
+}
+
 // ─── ANSI colors ─────────────────────────────────────────────────────────────
 
 define('CLR_RESET',     "\033[0m");

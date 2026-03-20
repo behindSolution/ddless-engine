@@ -321,7 +321,9 @@ function ddless_read_breakpoints(string $ddlessDir): array
 
 // Setup
 // Path from .ddless/frameworks/php/ to project root
-$projectRoot = dirname(__DIR__, 3);
+$projectRoot = !empty($GLOBALS['__DDLESS_PLAYGROUND__']) && defined('DDLESS_PROJECT_ROOT')
+    ? DDLESS_PROJECT_ROOT
+    : dirname(__DIR__, 3);
 $ddlessDirectory = dirname(__DIR__, 2);
 
 $composerAutoload = $projectRoot . '/vendor/autoload.php';
@@ -525,9 +527,12 @@ $snapshot = [
     'logs' => [],
 ];
 
-$sessionSnapshotPath = ddless_get_session_dir() . DIRECTORY_SEPARATOR . 'last_execution.json';
 $encodedSnapshot = ddless_encode_json($snapshot) . "\n";
-@file_put_contents($sessionSnapshotPath, $encodedSnapshot);
+
+if (function_exists('ddless_get_session_dir')) {
+    $sessionSnapshotPath = ddless_get_session_dir() . DIRECTORY_SEPARATOR . 'last_execution.json';
+    @file_put_contents($sessionSnapshotPath, $encodedSnapshot);
+}
 
 // Also write to root for backwards compatibility
 $rootSnapshotPath = $ddlessDirectory . DIRECTORY_SEPARATOR . 'last_execution.json';

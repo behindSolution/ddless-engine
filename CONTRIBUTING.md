@@ -5,10 +5,11 @@ Thanks for your interest in contributing! This document explains how to get star
 ## Getting Started
 
 1. Fork this repository
-2. Clone your fork inside your PHP project (or anywhere with PHP available):
+2. Clone your fork at the root of a PHP project:
    ```bash
-   cd /var/www/html          # your project root
-   git clone https://github.com/YOUR_USER/ddless-engine.git .ddless
+   cd /var/www/html          # your project root (must have composer.json)
+   git clone https://github.com/YOUR_USER/ddless-engine.git
+   cd ddless-engine
    ```
 3. Make sure tests pass before making changes:
    ```bash
@@ -61,15 +62,29 @@ before submitting a PR.
 
 ### Setup
 
-Clone ddless-engine at the root of a real PHP project:
+Clone ddless-engine **at the root of a real PHP project** (alongside `composer.json`):
 
-```bash
-cd /var/www/html
-git clone https://github.com/YOUR_USER/ddless-engine.git
-cd ddless-engine
+```
+/var/www/html/                  ← your project root (has composer.json)
+├── app/
+├── vendor/
+├── composer.json
+└── ddless-engine/              ← clone here
+    └── src/
+        ├── debug.php
+        ├── frameworks/
+        └── playground/
 ```
 
-The playground auto-detects your project root (the parent directory with `composer.json`).
+```bash
+cd /var/www/html                # go to your project root
+git clone https://github.com/YOUR_USER/ddless-engine.git
+cd ddless-engine                # all playground commands run from here
+```
+
+The playground auto-detects your project root by looking for `composer.json`
+one directory above `ddless-engine/`. All breakpoint paths (e.g.
+`app/Services/OrderService.php:38`) resolve relative to that project root.
 
 ### Step 1 — Engine Test
 

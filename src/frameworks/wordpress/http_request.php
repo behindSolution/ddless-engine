@@ -318,7 +318,9 @@ function ddless_read_breakpoints(string $ddlessDir): array
 }
 
 // Setup
-$projectRoot = dirname(__DIR__, 3);
+$projectRoot = !empty($GLOBALS['__DDLESS_PLAYGROUND__']) && defined('DDLESS_PROJECT_ROOT')
+    ? DDLESS_PROJECT_ROOT
+    : dirname(__DIR__, 3);
 $ddlessDirectory = dirname(__DIR__, 2);
 
 if (!defined('DDLESS_PROJECT_ROOT')) {
@@ -521,9 +523,12 @@ register_shutdown_function(function () use (
         'logs' => [],
     ];
 
-    $sessionSnapshotPath = ddless_get_session_dir() . DIRECTORY_SEPARATOR . 'last_execution.json';
     $encodedSnapshot = ddless_encode_json($snapshot) . "\n";
-    @file_put_contents($sessionSnapshotPath, $encodedSnapshot);
+
+    if (function_exists('ddless_get_session_dir')) {
+        $sessionSnapshotPath = ddless_get_session_dir() . DIRECTORY_SEPARATOR . 'last_execution.json';
+        @file_put_contents($sessionSnapshotPath, $encodedSnapshot);
+    }
 
     $rootSnapshotPath = $ddlessDirectory . DIRECTORY_SEPARATOR . 'last_execution.json';
     @file_put_contents($rootSnapshotPath, $encodedSnapshot);

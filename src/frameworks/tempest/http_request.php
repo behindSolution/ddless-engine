@@ -443,7 +443,9 @@ function ddless_response_status_text(int $statusCode): ?string
 
 // Tempest Bootstrap
 // Path from .ddless/frameworks/tempest/ to project root
-$projectRoot = dirname(__DIR__, 3);
+$projectRoot = !empty($GLOBALS['__DDLESS_PLAYGROUND__']) && defined('DDLESS_PROJECT_ROOT')
+    ? DDLESS_PROJECT_ROOT
+    : dirname(__DIR__, 3);
 $ddlessDirectory = dirname(__DIR__, 2);
 
 if (!defined('DDLESS_PROJECT_ROOT')) {
@@ -937,9 +939,12 @@ try {
         'logs' => $logs,
     ];
 
-    $sessionSnapshotPath = ddless_get_session_dir() . DIRECTORY_SEPARATOR . 'last_execution.json';
     $encodedSnapshot = ddless_encode_json($snapshot) . "\n";
-    @file_put_contents($sessionSnapshotPath, $encodedSnapshot);
+
+    if (function_exists('ddless_get_session_dir')) {
+        $sessionSnapshotPath = ddless_get_session_dir() . DIRECTORY_SEPARATOR . 'last_execution.json';
+        @file_put_contents($sessionSnapshotPath, $encodedSnapshot);
+    }
 
     // Also write to root for backwards compatibility (non-session tools)
     $rootSnapshotPath = $ddlessDirectory . DIRECTORY_SEPARATOR . 'last_execution.json';

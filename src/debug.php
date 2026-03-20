@@ -1030,17 +1030,17 @@ function ddless_get_current_function_info(array $backtrace): array
     $currentFunction = null;
     $currentFile = null;
     $depth = 0;
-    
+
     foreach ($backtrace as $frame) {
         $funcName = $frame['function'] ?? '';
-        
+
         // Skip ddless internal functions
         if (str_starts_with($funcName, 'ddless_')) {
             continue;
         }
-        
+
         $depth++;
-        
+
         if ($currentFunction === null) {
             $class = $frame['class'] ?? '';
             $type = $frame['type'] ?? '';
@@ -1048,7 +1048,7 @@ function ddless_get_current_function_info(array $backtrace): array
             $currentFile = $frame['file'] ?? null;
         }
     }
-    
+
     return [
         'function' => $currentFunction,
         'file' => $currentFile,
@@ -1275,19 +1275,19 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
         ddless_handle_breakpoint($file, $line, $relativePath, $scopeVariables, $scopeBacktrace);
         return;
     }
-    
+
     // Get current execution context
     $context = ddless_get_current_function_info($scopeBacktrace);
     $currentFunction = $context['function'];
     $currentDepth = $context['depth'];
-    
+
     // STEP IN MODE: Stop on ANY next line (enters functions)
     if ($GLOBALS['__DDLESS_STEP_IN_MODE__'] ?? false) {
         $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false; // Reset after stopping
         ddless_handle_breakpoint($file, $line, $relativePath, $scopeVariables, $scopeBacktrace);
         return;
     }
-    
+
     // STEP OVER MODE: Stop only in the SAME function (don't enter called functions)
     if ($GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] !== null) {
         $targetFunction = $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'];
@@ -1314,11 +1314,11 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
         // Otherwise, continue executing (we're inside a called function in another file)
         return;
     }
-    
+
     // STEP OUT MODE: Stop when we've returned to the caller function
     if ($GLOBALS['__DDLESS_STEP_OUT_TARGET__'] !== null) {
         $targetFunction = $GLOBALS['__DDLESS_STEP_OUT_TARGET__'];
-        
+
         if ($currentFunction !== null && $currentFunction === $targetFunction) {
             // We've returned to the caller function, pause here
             $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null;
@@ -1328,141 +1328,147 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
         // Continue executing until we return to target
         return;
     }
-    
+
     // No step mode active and not a user breakpoint - continue execution
     // Log for debugging (uncomment if needed to trace execution):
     // ddless_log("[ddless] step_check passed through at {$relativePath}:{$line}\n");
 }
 
 // Normalize value for JSON serialization
-function ddless_normalize_value($value, int $depth = 0)
-{
-    $maxDepth = $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] ?? 4;
-    if ($depth > $maxDepth) {
+// Guard: http_request.php may define this first (loaded before debug.php in playground)
+if (!function_exists('ddless_normalize_value')) {
+    function ddless_normalize_value($value, int $depth = 0)
+    {
+        $maxDepth = $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] ?? 4;
+        if ($depth > $maxDepth) {
+            if (is_object($value)) {
+                return '[object ' . get_class($value) . ']';
+            }
+            return is_scalar($value) ? $value : '[max-depth]';
+        }
+
+        if (is_null($value) || is_bool($value) || is_int($value) || is_float($value)) {
+            return $value;
+        }
+
+        if (is_string($value)) {
+            if (strlen($value) > 10000) {
+                return substr($value, 0, 10000) . '…';
+            }
+            return $value;
+        }
+
+        if (is_array($value)) {
+            $result = [];
+            foreach ($value as $key => $item) {
+                $result[$key] = ddless_normalize_value($item, $depth + 1);
+            }
+            return $result;
+        }
+
+        if ($value instanceof \BackedEnum) {
+            return $value->value; // Return the scalar value for backed enums
+        }
+        if ($value instanceof \UnitEnum) {
+            return $value->name; // Return the name for unit enums
+        }
+
+        if ($value instanceof \JsonSerializable) {
+            try {
+                return ddless_normalize_value($value->jsonSerialize(), $depth + 1);
+            } catch (\Throwable $exception) {
+                return '[object ' . get_class($value) . ']';
+            }
+        }
+
+        if (interface_exists('Illuminate\Contracts\Support\Arrayable') && is_object($value) && is_a($value, 'Illuminate\Contracts\Support\Arrayable')) {
+            try {
+                return ddless_normalize_value($value->toArray(), $depth + 1);
+            } catch (\Throwable $exception) {
+                return '[object ' . get_class($value) . ']';
+            }
+        }
+
+        if (method_exists($value, 'toArray')) {
+            try {
+                return ddless_normalize_value($value->toArray(), $depth + 1);
+            } catch (\Throwable $exception) {
+                // ignore fallthrough
+            }
+        }
+
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format(\DateTimeInterface::ATOM);
+        }
+
         if (is_object($value)) {
             return '[object ' . get_class($value) . ']';
         }
-        return is_scalar($value) ? $value : '[max-depth]';
-    }
 
-    if (is_null($value) || is_bool($value) || is_int($value) || is_float($value)) {
-        return $value;
-    }
-
-    if (is_string($value)) {
-        if (strlen($value) > 10000) {
-            return substr($value, 0, 10000) . '…';
+        if (is_resource($value)) {
+            return '[resource ' . (get_resource_type($value) ?: 'resource') . ']';
         }
-        return $value;
-    }
 
-    if (is_array($value)) {
+        return (string)$value;
+    }
+} // end function_exists('ddless_normalize_value')
+
+// Guard: http_request.php may define this first (loaded before debug.php in playground)
+if (!function_exists('ddless_build_call_stack')) {
+    function ddless_build_call_stack(array $backtrace): array
+    {
         $result = [];
-        foreach ($value as $key => $item) {
-            $result[$key] = ddless_normalize_value($item, $depth + 1);
+        $limit = 30;
+
+        foreach ($backtrace as $index => $frame) {
+            if ($index >= $limit) {
+                $result[] = [
+                    'label' => null,
+                    'file' => null,
+                    'line' => null,
+                    'truncated' => true,
+                ];
+                break;
+            }
+
+            if (!is_array($frame)) {
+                continue;
+            }
+
+            $class = isset($frame['class']) && is_string($frame['class']) ? $frame['class'] : null;
+            $type = isset($frame['type']) && is_string($frame['type']) ? $frame['type'] : '';
+            $function = isset($frame['function']) && is_string($frame['function']) ? $frame['function'] : null;
+
+            $file = null;
+            if (isset($frame['file']) && is_string($frame['file'])) {
+                $file = str_replace('\\', '/', $frame['file']);
+                $root = defined('DDLESS_PROJECT_ROOT') ? str_replace('\\', '/', (string)DDLESS_PROJECT_ROOT) : null;
+                if ($root && str_starts_with($file, $root)) {
+                    $file = ltrim(substr($file, strlen($root)), '/');
+                }
+            }
+
+            $line = isset($frame['line']) && (is_int($frame['line']) || ctype_digit((string)$frame['line']))
+                ? (int)$frame['line']
+                : null;
+
+            $label = $function;
+            if ($class !== null && $function !== null) {
+                $label = $class . $type . $function;
+            } elseif ($function === null) {
+                $label = 'main';
+            }
+
+            $result[] = [
+                'label' => $label,
+                'file' => $file,
+                'line' => $line,
+            ];
         }
+
         return $result;
     }
-
-    if ($value instanceof \BackedEnum) {
-        return $value->value; // Return the scalar value for backed enums
-    }
-    if ($value instanceof \UnitEnum) {
-        return $value->name; // Return the name for unit enums
-    }
-
-    if ($value instanceof \JsonSerializable) {
-        try {
-            return ddless_normalize_value($value->jsonSerialize(), $depth + 1);
-        } catch (\Throwable $exception) {
-            return '[object ' . get_class($value) . ']';
-        }
-    }
-
-    if (interface_exists('Illuminate\Contracts\Support\Arrayable') && is_object($value) && is_a($value, 'Illuminate\Contracts\Support\Arrayable')) {
-        try {
-            return ddless_normalize_value($value->toArray(), $depth + 1);
-        } catch (\Throwable $exception) {
-            return '[object ' . get_class($value) . ']';
-        }
-    }
-
-    if (method_exists($value, 'toArray')) {
-        try {
-            return ddless_normalize_value($value->toArray(), $depth + 1);
-        } catch (\Throwable $exception) {
-            // ignore fallthrough
-        }
-    }
-
-    if ($value instanceof \DateTimeInterface) {
-        return $value->format(\DateTimeInterface::ATOM);
-    }
-
-    if (is_object($value)) {
-        return '[object ' . get_class($value) . ']';
-    }
-
-    if (is_resource($value)) {
-        return '[resource ' . (get_resource_type($value) ?: 'resource') . ']';
-    }
-
-    return (string)$value;
-}
-
-function ddless_build_call_stack(array $backtrace): array
-{
-    $result = [];
-    $limit = 30;
-
-    foreach ($backtrace as $index => $frame) {
-        if ($index >= $limit) {
-            $result[] = [
-                'label' => null,
-                'file' => null,
-                'line' => null,
-                'truncated' => true,
-            ];
-            break;
-        }
-
-        if (!is_array($frame)) {
-            continue;
-        }
-
-        $class = isset($frame['class']) && is_string($frame['class']) ? $frame['class'] : null;
-        $type = isset($frame['type']) && is_string($frame['type']) ? $frame['type'] : '';
-        $function = isset($frame['function']) && is_string($frame['function']) ? $frame['function'] : null;
-        
-        $file = null;
-        if (isset($frame['file']) && is_string($frame['file'])) {
-            $file = str_replace('\\', '/', $frame['file']);
-            $root = defined('DDLESS_PROJECT_ROOT') ? str_replace('\\', '/', (string)DDLESS_PROJECT_ROOT) : null;
-            if ($root && str_starts_with($file, $root)) {
-                $file = ltrim(substr($file, strlen($root)), '/');
-            }
-        }
-        
-        $line = isset($frame['line']) && (is_int($frame['line']) || ctype_digit((string)$frame['line']))
-            ? (int)$frame['line']
-            : null;
-
-        $label = $function;
-        if ($class !== null && $function !== null) {
-            $label = $class . $type . $function;
-        } elseif ($function === null) {
-            $label = 'main';
-        }
-
-        $result[] = [
-            'label' => $label,
-            'file' => $file,
-            'line' => $line,
-        ];
-    }
-
-    return $result;
-}
+} // end function_exists('ddless_build_call_stack')
 
 // Extracts constants, $this properties, static properties, etc.
 function ddless_extract_used_constants(string $filePath): array
@@ -2271,33 +2277,33 @@ function ddless_ensure_cache_dir(): bool
 {
     $cacheDir = ddless_get_cache_dir();
     $instrumentedDir = $cacheDir . '/instrumented';
-    
+
     if (!is_dir($cacheDir)) {
         if (!@mkdir($cacheDir, 0755, true)) {
             return false;
         }
     }
-    
+
     if (!is_dir($instrumentedDir)) {
         if (!@mkdir($instrumentedDir, 0755, true)) {
             return false;
         }
     }
-    
+
     return true;
 }
 
 function ddless_load_cache_index(): array
 {
     $indexPath = ddless_get_cache_index_path();
-    
+
     if (!is_file($indexPath)) {
         return [
             'version' => DDLESS_CACHE_VERSION,
             'files' => [],
         ];
     }
-    
+
     $content = @file_get_contents($indexPath);
     if ($content === false) {
         return [
@@ -2305,7 +2311,7 @@ function ddless_load_cache_index(): array
             'files' => [],
         ];
     }
-    
+
     $data = json_decode($content, true);
     if (!is_array($data)) {
         return [
@@ -2313,7 +2319,7 @@ function ddless_load_cache_index(): array
             'files' => [],
         ];
     }
-    
+
     if (($data['version'] ?? '') !== DDLESS_CACHE_VERSION) {
         ddless_log("[ddless][cache] Cache version mismatch, invalidating all cache\n");
         ddless_clear_cache();
@@ -2322,7 +2328,7 @@ function ddless_load_cache_index(): array
             'files' => [],
         ];
     }
-    
+
     return $data;
 }
 
@@ -2331,10 +2337,10 @@ function ddless_save_cache_index(array $index): bool
     if (!ddless_ensure_cache_dir()) {
         return false;
     }
-    
+
     $indexPath = ddless_get_cache_index_path();
     $content = json_encode($index, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-    
+
     return @file_put_contents($indexPath, $content) !== false;
 }
 
@@ -2348,21 +2354,21 @@ function ddless_file_has_changed(string $absolutePath, array $cacheIndex): bool
     if (!isset($cacheIndex['files'][$absolutePath])) {
         return true; // Not in cache
     }
-    
+
     $cached = $cacheIndex['files'][$absolutePath];
-    
+
     if (!is_file($absolutePath)) {
         return true;
     }
-    
+
     $currentMtime = @filemtime($absolutePath);
     $currentSize = @filesize($absolutePath);
-    
-    if ($currentMtime !== ($cached['mtime'] ?? null) || 
+
+    if ($currentMtime !== ($cached['mtime'] ?? null) ||
         $currentSize !== ($cached['size'] ?? null)) {
         return true;
     }
-    
+
     // (We could add hash verification here for extra safety, but it's slower)
     return false;
 }
@@ -2372,21 +2378,21 @@ function ddless_save_to_cache(string $absolutePath, string $instrumentedCode, ar
     if (!ddless_ensure_cache_dir()) {
         return false;
     }
-    
+
     $cacheFilename = ddless_get_cache_filename($absolutePath);
     $cachePath = ddless_get_cache_dir() . '/instrumented/' . $cacheFilename;
-    
+
     if (@file_put_contents($cachePath, $instrumentedCode) === false) {
         return false;
     }
-    
+
     $cacheIndex['files'][$absolutePath] = [
         'mtime' => @filemtime($absolutePath),
         'size' => @filesize($absolutePath),
         'cacheFile' => $cacheFilename,
         'cachedAt' => time(),
     ];
-    
+
     return true;
 }
 
@@ -2395,20 +2401,20 @@ function ddless_load_from_cache(string $absolutePath, array $cacheIndex): ?strin
     if (!isset($cacheIndex['files'][$absolutePath])) {
         return null;
     }
-    
+
     $cached = $cacheIndex['files'][$absolutePath];
     $cacheFile = $cached['cacheFile'] ?? null;
-    
+
     if (!$cacheFile) {
         return null;
     }
-    
+
     $cachePath = ddless_get_cache_dir() . '/instrumented/' . $cacheFile;
-    
+
     if (!is_file($cachePath)) {
         return null;
     }
-    
+
     $content = @file_get_contents($cachePath);
     return $content !== false ? $content : null;
 }
@@ -2417,7 +2423,7 @@ function ddless_clear_cache(): void
 {
     $cacheDir = ddless_get_cache_dir();
     $instrumentedDir = $cacheDir . '/instrumented';
-    
+
     if (is_dir($instrumentedDir)) {
         $files = glob($instrumentedDir . '/*.php');
         if ($files) {
@@ -2426,7 +2432,7 @@ function ddless_clear_cache(): void
             }
         }
     }
-    
+
     $indexPath = ddless_get_cache_index_path();
     if (is_file($indexPath)) {
         @unlink($indexPath);
@@ -2437,7 +2443,7 @@ function ddless_cleanup_cache(array &$cacheIndex): int
 {
     $removed = 0;
     $instrumentedDir = ddless_get_cache_dir() . '/instrumented';
-    
+
     foreach ($cacheIndex['files'] as $absolutePath => $cached) {
         if (!is_file($absolutePath)) {
             // File no longer exists, remove from cache
@@ -2449,89 +2455,89 @@ function ddless_cleanup_cache(array &$cacheIndex): int
             $removed++;
         }
     }
-    
+
     return $removed;
 }
 
 function ddless_instrument_all_project_files(): int
 {
     $projectRoot = defined('DDLESS_PROJECT_ROOT') ? DDLESS_PROJECT_ROOT : dirname(__DIR__);
-    
+
     ddless_log("[ddless] Starting project instrumentation with cache...\n");
     $startTime = microtime(true);
-    
+
     $cacheIndex = ddless_load_cache_index();
     $cacheHits = 0;
     $cacheMisses = 0;
     $cacheIndexModified = false;
-    
+
     $cleanedUp = ddless_cleanup_cache($cacheIndex);
     if ($cleanedUp > 0) {
         ddless_log("[ddless][cache] Cleaned up {$cleanedUp} stale cache entries\n");
         $cacheIndexModified = true;
     }
-    
+
     $allFiles = ddless_find_all_php_files($projectRoot);
     $totalFiles = count($allFiles);
     ddless_log("[ddless] Found {$totalFiles} PHP files in project\n");
-    
+
     ddless_emit_progress(0, $totalFiles, 'Checking cache...');
-    
+
     $instrumentedCount = 0;
     $skippedCount = 0;
     $processedCount = 0;
     $lastProgressUpdate = 0;
-    
+
     foreach ($allFiles as $absolutePath) {
         $processedCount++;
-        
+
         if (isset($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$absolutePath])) {
             continue;
         }
-        
+
         $realPath = realpath($absolutePath) ?: $absolutePath;
-        
+
         $projectRootNorm = str_replace('\\', '/', rtrim($projectRoot, '/\\'));
         $pathNorm = str_replace('\\', '/', $realPath);
-        
+
         if (strpos($pathNorm, $projectRootNorm) === 0) {
             $relativePath = ltrim(substr($pathNorm, strlen($projectRootNorm)), '/');
         } else {
             $relativePath = basename($realPath);
         }
-        
+
         if ($processedCount - $lastProgressUpdate >= 10) {
             ddless_emit_progress($processedCount, $totalFiles, $relativePath);
             $lastProgressUpdate = $processedCount;
         }
-        
+
         $hasBreakpoints = isset($GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$realPath]) ||
                           isset($GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$absolutePath]);
-        
+
         $instrumented = null;
-        
+
         if (!$hasBreakpoints && !ddless_file_has_changed($realPath, $cacheIndex)) {
             $instrumented = ddless_load_from_cache($realPath, $cacheIndex);
             if ($instrumented !== null) {
                 $cacheHits++;
             }
         }
-        
+
         if ($instrumented === null) {
             $cacheMisses++;
-            
+
             if ($hasBreakpoints) {
                 $instrumented = ddless_instrument_php_file($realPath);
             } else {
                 $instrumented = ddless_instrument_php_file_ondemand($realPath, true);
             }
-            
+
             if ($instrumented !== null && !$hasBreakpoints) {
                 ddless_save_to_cache($realPath, $instrumented, $cacheIndex);
                 $cacheIndexModified = true;
             }
         }
-        
+
         if ($instrumented !== null) {
             $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$realPath] = $instrumented;
             $instrumentedCount++;
@@ -2539,16 +2545,16 @@ function ddless_instrument_all_project_files(): int
             $skippedCount++;
         }
     }
-    
+
     if ($cacheIndexModified) {
         ddless_save_cache_index($cacheIndex);
     }
-    
+
     ddless_emit_progress($totalFiles, $totalFiles, 'Complete');
-    
+
     $elapsed = round((microtime(true) - $startTime) * 1000);
     ddless_log("[ddless] Instrumentation complete: {$instrumentedCount} files ready ({$cacheHits} from cache, {$cacheMisses} instrumented, {$skippedCount} skipped) in {$elapsed}ms\n");
-    
+
     return $instrumentedCount;
 }
 
@@ -2558,11 +2564,11 @@ if (ddless_is_debug_mode_active()) {
             if (!is_file($absolutePath)) {
                 continue;
             }
-            
+
             if (isset($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$absolutePath])) {
                 continue;
             }
-            
+
             $instrumented = ddless_instrument_php_file($absolutePath);
             if ($instrumented !== null) {
                 $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$absolutePath] = $instrumented;
@@ -2570,9 +2576,9 @@ if (ddless_is_debug_mode_active()) {
             }
         }
     }
-    
+
     ddless_instrument_all_project_files();
-    
+
     if (!empty($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'])) {
         ddless_log("[ddless] Total files ready for debugging: " . count($GLOBALS['__DDLESS_INSTRUMENTED_CODE__']) . "\n");
     }
@@ -2628,18 +2634,18 @@ class DDLessSafeIncludeWrapper
     private static function getInstrumentedContent(string $path): ?string
     {
         $realPath = self::getRealPath($path);
-        return $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$realPath] 
-            ?? $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$path] 
+        return $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$realPath]
+            ?? $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$path]
             ?? null;
     }
 
     public function stream_open($path, $mode, $options, &$opened_path)
     {
         $this->path = $path;
-        
+
         $isReadMode = ($mode === 'r' || $mode === 'rb');
         $isPhpFile = str_ends_with($path, '.php');
-        
+
         if ($isReadMode && $isPhpFile) {
             if (self::isInstrumentedFile($path)) {
                 $this->content = self::getInstrumentedContent($path);
@@ -2690,7 +2696,7 @@ class DDLessSafeIncludeWrapper
                     return true;
                 }
             }
-            
+
             if (ddless_is_step_mode_active() && !ddless_is_vendor_path($path)) {
                 $realPath = self::getRealPath($path);
 
@@ -2739,11 +2745,11 @@ class DDLessSafeIncludeWrapper
                 }
             }
         }
-        
+
         self::restore();
         $this->handle = @fopen($path, $mode);
         self::register();
-        
+
         return $this->handle !== false;
     }
 
