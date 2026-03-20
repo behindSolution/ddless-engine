@@ -14,6 +14,7 @@
  *   php test_trigger.php --file script.php --bp 10 --bp 25
  *   php test_trigger.php --code '$x = 1; echo $x;' --bp 1
  *   php test_trigger.php --file script.php --bp Service.php:45 --depth 5
+ *   php test_trigger.php --boot boot.php --file test_orders.php --bp 5
  */
 
 $paths = ddless_resolve_paths();
@@ -25,6 +26,7 @@ $projectRoot = $paths['projectRoot'];
 $opts = [
     'file'  => null,
     'code'  => null,
+    'boot'  => null,
     'bp'    => [],
     'depth' => 4,
 ];
@@ -44,6 +46,9 @@ while ($i < count($args)) {
         case '--bp': case '-b':
             $opts['bp'][] = $args[++$i] ?? null;
             break;
+        case '--boot':
+            $opts['boot'] = $args[++$i] ?? null;
+            break;
         case '--depth': case '-d':
             $opts['depth'] = (int) ($args[++$i] ?? 4);
             break;
@@ -55,10 +60,12 @@ while ($i < count($args)) {
   Usage:
     php test_trigger.php --file <script.php> [--bp <line>] [--depth <n>]
     php test_trigger.php --code '<php code>' [--bp <line>] [--depth <n>]
+    php test_trigger.php --boot <bootstrap.php> --file <script.php> [--bp <line>]
 
   Options:
     --file, -f <path>    PHP file to debug (relative to project root)
     --code, -c <code>    Inline PHP code to debug (without <?php tag)
+    --boot  <path>       Bootstrap file to require before running (boots framework)
     --bp,   -b <spec>    Breakpoint: line number or file.php:line (repeatable)
     --depth, -d <n>      Variable serialization depth (default: 4)
     --help, -h           Show this help
@@ -144,6 +151,9 @@ ddless_register_terminal_handler();
 
 // Banner
 fwrite(STDERR, "\n" . CLR_BOLD . "  DDLess Debug" . CLR_RESET . CLR_DIM . " — Engine Test" . CLR_RESET . "\n");
+if ($opts['boot'] !== null) {
+    fwrite(STDERR, CLR_DIM . "  Boot: " . CLR_RESET . $opts['boot'] . "\n");
+}
 if ($opts['file'] !== null) {
     fwrite(STDERR, CLR_DIM . "  File: " . CLR_RESET . $scriptRelative . "\n");
 } else {
@@ -172,6 +182,20 @@ function ddless_engine_run_isolated(string $__ddless_script_path__): void
 $exitCode = 0;
 
 try {
+    // Boot framework if --boot was provided
+    if ($opts['boot'] !== null) {
+        $bootPath = $opts['boot'];
+        if (!str_starts_with($bootPath, '/') && !preg_match('/^[A-Za-z]:/', $bootPath)) {
+            $bootPath = $projectRoot . DIRECTORY_SEPARATOR . $bootPath;
+        }
+        if (!is_file($bootPath)) {
+            fwrite(STDERR, CLR_RED . "  Error: Boot file not found: {$bootPath}" . CLR_RESET . "\n");
+            exit(1);
+        }
+        fwrite(STDERR, CLR_DIM . "  Booting..." . CLR_RESET . "\n");
+        require $bootPath;
+    }
+
     fwrite(STDERR, CLR_DIM . "  Running..." . CLR_RESET . "\n");
     ob_start('ddless_terminal_output_filter');
     ddless_engine_run_isolated($scriptPath);

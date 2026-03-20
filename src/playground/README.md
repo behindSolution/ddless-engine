@@ -80,25 +80,43 @@ Follow this order. Each step validates a layer before moving to the next.
 
 ### Step 1 — Engine Test (debug engine)
 
-Validates that breakpoints, stepping, and variable inspection work. Point directly
-to any PHP file in your project — the engine instruments it and sets breakpoints.
+Validates that breakpoints, stepping, and variable inspection work.
 
 ```bash
 # Quick sanity check — inline code, no framework
 php playground/test_trigger.php --code '$x = 1; $y = 2; $z = $x + $y; echo $z;' --bp 2
 
-# Point to a real file in your project (absolute path)
-php playground/test_trigger.php --file /var/www/html/app/Services/OrderService.php --bp 32
-
-# Multiple breakpoints
-php playground/test_trigger.php --file /var/www/html/app/Services/OrderService.php --bp 32 --bp 45 --bp 60
-
-# Adjust variable depth for complex objects
-php playground/test_trigger.php --file /var/www/html/app/Services/OrderService.php --bp 32 --depth 6
+# With framework context — boot first, then run your script
+php playground/test_trigger.php --boot boot.php --file test_orders.php --bp 3
 ```
 
-> **Tip:** Inside a Laravel Sail container, clone ddless-engine and point `--file`
-> to your project files. No setup needed — the engine instruments any PHP file.
+The `--boot` flag lets you boot your framework before running the target script.
+Create a `boot.php` at your project root:
+
+```php
+<?php
+// boot.php — Laravel example
+$app = require __DIR__ . '/bootstrap/app.php';
+$app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+```
+
+Then write a script that uses the framework:
+
+```php
+<?php
+// test_orders.php
+$service = app(\App\Services\OrderService::class);
+$result = $service->calculate(42);
+var_dump($result);
+```
+
+```bash
+php playground/test_trigger.php --boot boot.php --file test_orders.php --bp 3 --bp 4
+```
+
+This is the first test a contributor should run when adding a new framework.
+If the boot works and breakpoints hit, you understand how the framework boots —
+and you can replicate that in `method_executor.php`, `task_runner.php`, and `http_request.php`.
 
 At the breakpoint, use the interactive commands:
 - `c` — continue to next breakpoint
@@ -108,9 +126,10 @@ At the breakpoint, use the interactive commands:
 - `q` — quit
 
 **What to verify:**
+- Framework boots without errors
 - Breakpoint stops at the correct line
 - Source code is displayed with the current line highlighted (not instrumented code)
-- Variables show correct values
+- Variables show correct values (framework objects, services, etc.)
 - Step commands work as expected
 
 ### Step 2 — Method Test (method executor)

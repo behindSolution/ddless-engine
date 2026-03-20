@@ -78,20 +78,23 @@ cd .ddless
 ### Step 1 — Engine Test
 
 Validates the core debug engine (breakpoints, stepping, variable inspection).
-Point to any PHP file in your project:
+Use `--boot` to boot your framework first, then run a script with breakpoints:
 
 ```bash
-# Inline code — quick sanity check
+# Quick sanity check — no framework
 php src/playground/test_trigger.php --code '$x = 1; $y = 2; echo $x + $y;' --bp 2
 
-# Real project file
-php src/playground/test_trigger.php --file /var/www/html/app/Services/OrderService.php --bp 32
+# With framework — create a boot.php at your project root:
+#   <?php
+#   $app = require __DIR__ . '/bootstrap/app.php';
+#   $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-# Multiple breakpoints
-php src/playground/test_trigger.php --file /var/www/html/app/Services/OrderService.php --bp 32 --bp 45
+# Then run a script that uses the framework:
+php src/playground/test_trigger.php --boot boot.php --file test_orders.php --bp 3
 ```
 
-If this fails on your project file, the issue is in the project (autoload, syntax), not DDLess.
+This is the first test when adding a new framework. If the boot works and breakpoints
+hit, you understand the framework bootstrap — and can replicate it in the handlers.
 
 ### Step 2 — Method Test
 
