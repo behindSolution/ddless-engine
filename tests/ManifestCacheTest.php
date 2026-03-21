@@ -4,6 +4,7 @@
  *
  * Tests the manifest-based fast path that skips filesystem scanning
  * on subsequent requests when breakpoints/scope haven't changed.
+ * Tests the invalidated_files.json queue consumed by the fast path.
  */
 
 require_once __DIR__ . '/bootstrap.php';
@@ -97,11 +98,8 @@ test('context hash is stable with same inputs', function () {
 section('Manifest — fast path');
 
 test('fast path returns false when no manifest exists', function () {
-    // Point cache dir to a temp location with no manifest
     $tmp = manifest_setup_temp_project();
-    $origCacheDir = null;
 
-    // We can't easily redirect ddless_get_cache_dir, so test the logic directly
     $manifestPath = $tmp . '/.ddless/cache/manifest.json';
     assert_false(is_file($manifestPath), 'Manifest should not exist');
 
@@ -112,7 +110,6 @@ test('fast path returns false when context hash mismatches', function () {
     $tmp = manifest_setup_temp_project();
     $cacheDir = $tmp . '/.ddless/cache';
 
-    // Save manifest with a different context hash
     manifest_write($cacheDir, [
         'contextHash' => 'wrong_hash',
         'cacheVersion' => DDLESS_CACHE_VERSION,
@@ -161,13 +158,12 @@ test('manifest is valid when context hash and cache version match', function () 
 });
 
 // ============================================================================
-// Tests: ddless_save_manifest
+// Tests: ddless_save_manifest (simplified — no mtime/size)
 // ============================================================================
 
 section('Manifest — save and load roundtrip');
 
-test('save_manifest writes valid JSON with correct structure', function () {
-    // Use the real cache dir
+test('save_manifest writes valid JSON with path-only entries', function () {
     $files = ['/tmp/a.php', '/tmp/b.php', '/tmp/c.php'];
     ddless_save_manifest($files);
 
@@ -181,6 +177,8 @@ test('save_manifest writes valid JSON with correct structure', function () {
     assert_array_has_key('files', $data);
     assert_eq(DDLESS_CACHE_VERSION, $data['cacheVersion']);
     assert_count(3, $data['files']);
+
+    // Files are stored as plain path strings (no mtime/size)
     assert_eq('/tmp/a.php', $data['files'][0]);
     assert_eq('/tmp/b.php', $data['files'][1]);
     assert_eq('/tmp/c.php', $data['files'][2]);
@@ -207,6 +205,55 @@ test('save_manifest updates context hash on each save', function () {
     // Cleanup
     @unlink(ddless_get_manifest_path());
     $GLOBALS['__DDLESS_BREAKPOINT_FILES__'] = $old;
+});
+
+// ============================================================================
+// Tests: ddless_consume_invalidated_files
+// ============================================================================
+
+section('Manifest — invalidated files queue');
+
+test('consume returns null when no queue file exists', function () {
+    // Ensure no file exists
+    @unlink(ddless_get_invalidated_files_path());
+
+    $result = ddless_consume_invalidated_files();
+    assert_null($result, 'Should return null when no queue file');
+});
+
+test('consume reads and deletes the queue file', function () {
+    $path = ddless_get_invalidated_files_path();
+    file_put_contents($path, json_encode(['/tmp/changed.php', '/tmp/other.php']));
+
+    $result = ddless_consume_invalidated_files();
+    assert_true(is_array($result), 'Should return array');
+    assert_count(2, $result);
+    assert_eq('/tmp/changed.php', $result[0]);
+    assert_eq('/tmp/other.php', $result[1]);
+
+    // File should be deleted after consume
+    assert_false(is_file($path), 'Queue file should be deleted after consume');
+});
+
+test('consume returns null for invalid JSON', function () {
+    $path = ddless_get_invalidated_files_path();
+    file_put_contents($path, 'not valid json');
+
+    $result = ddless_consume_invalidated_files();
+    assert_null($result, 'Should return null for invalid JSON');
+
+    // File should still be deleted
+    assert_false(is_file($path), 'Queue file should be deleted even for invalid JSON');
+});
+
+test('consume handles empty array', function () {
+    $path = ddless_get_invalidated_files_path();
+    file_put_contents($path, '[]');
+
+    $result = ddless_consume_invalidated_files();
+    assert_true(is_array($result), 'Should return array');
+    assert_count(0, $result);
+    assert_false(is_file($path), 'Queue file should be deleted');
 });
 
 // ============================================================================
@@ -288,4 +335,11 @@ test('empty manifest files array is valid', function () {
 
     // Cleanup
     @unlink(ddless_get_manifest_path());
+});
+
+test('invalidated_files.json path is in session dir', function () {
+    $invalidatedPath = ddless_get_invalidated_files_path();
+    $sessionDir = ddless_get_session_dir();
+
+    assert_eq($sessionDir . '/invalidated_files.json', $invalidatedPath);
 });

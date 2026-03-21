@@ -2479,6 +2479,11 @@ function ddless_get_manifest_path(): string
     return ddless_get_session_dir() . '/manifest.json';
 }
 
+function ddless_get_invalidated_files_path(): string
+{
+    return ddless_get_session_dir() . '/invalidated_files.json';
+}
+
 function ddless_compute_context_hash(): string
 {
     // Hash of breakpoint files + debug scope — if either changes, we must re-scan
@@ -2486,6 +2491,33 @@ function ddless_compute_context_hash(): string
     sort($bpFiles);
     $scope = getenv('DDLESS_DEBUG_SCOPE') ?: '';
     return md5(implode("\0", $bpFiles) . '|' . $scope);
+}
+
+/**
+ * Read and consume the invalidated files queue written by Electron.
+ * Returns array of absolute paths that need re-instrumentation, or null if no queue file.
+ */
+function ddless_consume_invalidated_files(): ?array
+{
+    $path = ddless_get_invalidated_files_path();
+    if (!is_file($path)) {
+        return null;
+    }
+
+    $raw = @file_get_contents($path);
+    @unlink($path); // Consume: delete after reading
+
+    if ($raw === false) {
+        return null;
+    }
+
+    $list = json_decode($raw, true);
+    if (!is_array($list)) {
+        return null;
+    }
+
+    // Return as a lookup set for O(1) checks
+    return $list;
 }
 
 function ddless_try_manifest_fast_path(): bool
@@ -2515,21 +2547,38 @@ function ddless_try_manifest_fast_path(): bool
         return false;
     }
 
-    // Fast path: load all files from cache without scanning filesystem
+    // Read invalidated files queue (written by Electron when auto-sync detects changes)
+    $invalidatedList = ddless_consume_invalidated_files();
+    $invalidatedSet = $invalidatedList !== null ? array_flip($invalidatedList) : [];
+
+    // Fast path: load files from cache, re-instrument only invalidated ones
     $cacheIndex = ddless_load_cache_index();
     $filePaths = $manifest['files'] ?? [];
     $loaded = 0;
+    $reInstrumented = 0;
 
     foreach ($filePaths as $realPath) {
-        if (isset($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$realPath])) {
+        if ($realPath === '' || isset($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$realPath])) {
             $loaded++;
             continue;
         }
 
-        // Files with breakpoints must be re-instrumented (breakpoint lines change)
+        // Files with breakpoints must always be re-instrumented
         $hasBreakpoints = isset($GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$realPath]);
-        if ($hasBreakpoints) {
-            $instrumented = ddless_instrument_php_file($realPath);
+
+        // Check if file is in the invalidation queue
+        $isInvalidated = isset($invalidatedSet[$realPath]);
+
+        if ($hasBreakpoints || $isInvalidated) {
+            // Re-instrument this specific file (not the whole project)
+            $instrumented = $hasBreakpoints
+                ? ddless_instrument_php_file($realPath)
+                : ddless_instrument_php_file_ondemand($realPath, true);
+
+            if ($instrumented !== null && !$hasBreakpoints) {
+                ddless_save_to_cache($realPath, $instrumented, $cacheIndex);
+            }
+            $reInstrumented++;
         } else {
             $instrumented = ddless_load_from_cache($realPath, $cacheIndex);
         }
@@ -2540,20 +2589,21 @@ function ddless_try_manifest_fast_path(): bool
         }
     }
 
-    ddless_log("[ddless] Manifest fast path: {$loaded} files loaded from cache\n");
+    if ($reInstrumented > 0) {
+        ddless_save_cache_index($cacheIndex);
+        ddless_log("[ddless] Manifest fast path: {$loaded} files loaded ({$reInstrumented} re-instrumented)\n");
+    } else {
+        ddless_log("[ddless] Manifest fast path: {$loaded} files loaded from cache\n");
+    }
     return true;
 }
 
 function ddless_save_manifest(array $filePaths): void
 {
-    if (!ddless_ensure_cache_dir()) {
-        return;
-    }
-
     $manifest = [
         'contextHash' => ddless_compute_context_hash(),
         'cacheVersion' => DDLESS_CACHE_VERSION,
-        'files' => $filePaths,
+        'files' => array_values($filePaths),
     ];
 
     @file_put_contents(ddless_get_manifest_path(), json_encode($manifest, JSON_UNESCAPED_SLASHES));
