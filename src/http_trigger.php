@@ -239,6 +239,15 @@ if (empty($phpQueryParameters) && !empty($queryParameters)) {
 }
 
 $_SERVER = $server;
+
+if (isset($payload['serverVariables']) && is_array($payload['serverVariables'])) {
+    foreach ($payload['serverVariables'] as $key => $value) {
+        if (is_string($key) && $key !== '' && is_string($value)) {
+            $_SERVER[$key] = $value;
+        }
+    }
+}
+
 $_GET = $phpQueryParameters;
 $_POST = $formParameters;
 $_COOKIE = $cookies;
