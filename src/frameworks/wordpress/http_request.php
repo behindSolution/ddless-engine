@@ -366,10 +366,170 @@ if (getenv('DDLESS_DEBUG_MODE') === 'true') {
 // Change to project root so WordPress relative includes work
 chdir($projectRoot);
 
-// WordPress (WooCommerce, etc.) often calls die()/exit() after REST API responses.
-// PHP shutdown order: shutdown functions → destructors → output buffer flush.
-// We use register_shutdown_function() so the HTTP response is always properly
-// formatted even if die()/exit() is called during wp-blog-header.php execution.
+// ═══════════════════════════════════════════════════════════════════════════════
+// Proxy mode (php -S / cli-server): WordPress outputs directly to the browser.
+// No ob_start(), no fwrite(STDOUT). Only register a shutdown for the snapshot.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if (php_sapi_name() === 'cli-server') {
+    $__ddless_wp_error = null;
+
+    // Snapshot-only shutdown — response is handled natively by php -S
+    register_shutdown_function(function () use (
+        &$__ddless_wp_error,
+        $executionStartedAt,
+        $ddlessDirectory,
+        $breakpoints
+    ) {
+        $statusCode = http_response_code() ?: 200;
+
+        // Collect response headers from headers_list() (works in cli-server)
+        $responseHeaders = [];
+        foreach (headers_list() as $headerLine) {
+            $colonPos = strpos($headerLine, ':');
+            if ($colonPos !== false) {
+                $name = trim(substr($headerLine, 0, $colonPos));
+                $value = trim(substr($headerLine, $colonPos + 1));
+                $responseHeaders[$name] = $value;
+            }
+        }
+
+        $responseContentType = $responseHeaders['Content-Type'] ?? $responseHeaders['content-type'] ?? null;
+
+        // Snapshot Generation
+        $executionFinishedAt = microtime(true);
+        $durationMs = ($executionFinishedAt - $executionStartedAt) * 1000;
+        $memoryPeakBytes = memory_get_peak_usage(true);
+
+        $rawInput = $GLOBALS['__DDLESS_RAW_INPUT__'] ?? '';
+        $contentType = $_SERVER['CONTENT_TYPE'] ?? null;
+
+        $requestSummary = [
+            'method' => $_SERVER['REQUEST_METHOD'] ?? 'GET',
+            'path' => $_SERVER['REQUEST_URI'] ?? '/',
+            'fullUrl' => ($_SERVER['REQUEST_SCHEME'] ?? 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . ($_SERVER['REQUEST_URI'] ?? '/'),
+            'headers' => [],
+            'query' => ddless_normalize_value($_GET),
+            'input' => ddless_normalize_value($_POST),
+            'cookies' => ddless_normalize_value($_COOKIE),
+            'rawBody' => ddless_prepare_body_payload($rawInput, $contentType),
+        ];
+
+        $reqHeaders = [];
+        foreach ($_SERVER as $key => $value) {
+            if (str_starts_with($key, 'HTTP_')) {
+                $headerName = str_replace('_', '-', substr($key, 5));
+                $reqHeaders[$headerName] = (string)$value;
+            }
+        }
+        if (isset($_SERVER['CONTENT_TYPE'])) {
+            $reqHeaders['Content-Type'] = $_SERVER['CONTENT_TYPE'];
+        }
+        if (isset($_SERVER['CONTENT_LENGTH'])) {
+            $reqHeaders['Content-Length'] = $_SERVER['CONTENT_LENGTH'];
+        }
+        $requestSummary['headers'] = $reqHeaders;
+
+        $errorInfo = null;
+        if ($__ddless_wp_error !== null) {
+            $errorInfo = [
+                'message' => $__ddless_wp_error->getMessage(),
+                'file' => ddless_normalize_relative_path($__ddless_wp_error->getFile()),
+                'line' => $__ddless_wp_error->getLine(),
+                'trace' => array_slice(array_map(function ($frame) {
+                    return [
+                        'label' => ($frame['class'] ?? '') . ($frame['type'] ?? '') . ($frame['function'] ?? 'main'),
+                        'file' => isset($frame['file']) ? ddless_normalize_relative_path($frame['file']) : null,
+                        'line' => $frame['line'] ?? null,
+                    ];
+                }, $__ddless_wp_error->getTrace()), 0, 30),
+            ];
+        }
+
+        $snapshot = [
+            'timestamp' => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
+            'sessionId' => null,
+            'request' => $requestSummary,
+            'response' => [
+                'status' => $statusCode,
+                'statusText' => ddless_response_status_text($statusCode),
+                'headers' => ddless_normalize_headers($responseHeaders),
+                'body' => ['content' => '', 'encoding' => 'utf8', 'truncated' => false],
+            ],
+            'context' => [
+                'route' => [
+                    'uri' => $_SERVER['REQUEST_URI'] ?? '/',
+                    'name' => null,
+                    'methods' => [$_SERVER['REQUEST_METHOD'] ?? 'GET'],
+                    'action' => 'wp-blog-header.php',
+                    'parameters' => [],
+                ],
+                'controller' => [
+                    'file' => 'wp-blog-header.php',
+                    'class' => null,
+                    'method' => null,
+                    'startLine' => 1,
+                    'endLine' => null,
+                ],
+                'breakpoints' => $breakpoints,
+                'hitBreakpoints' => [],
+                'variables' => [
+                    'query' => $requestSummary['query'],
+                    'post' => $requestSummary['input'],
+                ],
+                'callStack' => [],
+                'error' => $errorInfo,
+            ],
+            'metrics' => [
+                'durationMs' => round($durationMs, 4),
+                'memoryPeakBytes' => $memoryPeakBytes,
+            ],
+            'logs' => [],
+        ];
+
+        $encodedSnapshot = ddless_encode_json($snapshot) . "\n";
+
+        if (function_exists('ddless_get_session_dir')) {
+            $sessionSnapshotPath = ddless_get_session_dir() . DIRECTORY_SEPARATOR . 'last_execution.json';
+            @file_put_contents($sessionSnapshotPath, $encodedSnapshot);
+        }
+
+        $rootSnapshotPath = $ddlessDirectory . DIRECTORY_SEPARATOR . 'last_execution.json';
+        @file_put_contents($rootSnapshotPath, $encodedSnapshot);
+
+        fwrite(STDERR, "[ddless] WordPress execution complete\n");
+    });
+
+    // Boot WordPress directly — php -S handles HTTP natively
+    // WP_USE_THEMES must be defined before wp-blog-header.php (same as index.php)
+    if (!defined('WP_USE_THEMES')) {
+        define('WP_USE_THEMES', true);
+    }
+
+    // Override site URL so WordPress doesn't redirect to the DB-configured URL (without port)
+    $currentHost = $_SERVER['HTTP_HOST'] ?? ('127.0.0.1' . (isset($_SERVER['SERVER_PORT']) ? ':' . $_SERVER['SERVER_PORT'] : ''));
+    if (!defined('WP_HOME')) {
+        define('WP_HOME', 'http://' . $currentHost);
+    }
+    if (!defined('WP_SITEURL')) {
+        define('WP_SITEURL', 'http://' . $currentHost);
+    }
+
+    try {
+        fwrite(STDERR, "[ddless] Booting WordPress via wp-blog-header.php...\n");
+        require $wpBlogHeader;
+        fwrite(STDERR, "[ddless] WordPress request handling completed.\n");
+    } catch (\Throwable $e) {
+        $__ddless_wp_error = $e;
+        fwrite(STDERR, "[ddless] WordPress threw: " . $e->getMessage() . "\n");
+    }
+
+    return; // Prevent falling into CLI mode below
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Direct mode (CLI): capture output, format HTTP response on STDOUT
+// ═══════════════════════════════════════════════════════════════════════════════
 
 $__ddless_wp_error = null;
 $__ddless_wp_responded = false;
@@ -385,7 +545,7 @@ register_shutdown_function(function () use (
     $breakpoints
 ) {
     if ($__ddless_wp_responded) {
-        return; // Already handled by normal flow
+        return;
     }
     $__ddless_wp_responded = true;
 
@@ -396,15 +556,10 @@ register_shutdown_function(function () use (
     }
 
     $statusCode = http_response_code() ?: 200;
-
-    // Use headers captured via WordPress hooks (rest_pre_serve_request / wp_headers).
-    // headers_list() is always empty in CLI mode, so we rely entirely on hook capture.
     $responseHeaders = $__ddless_wp_headers;
-
     $responseContentType = $responseHeaders['Content-Type'] ?? $responseHeaders['content-type'] ?? null;
 
-    // Strip encoding/length headers — ob_get_clean() captures raw (uncompressed) output,
-    // so forwarding Content-Encoding: gzip etc. causes the browser to fail parsing.
+    // Strip encoding/length headers — ob_get_clean() captures raw (uncompressed) output
     $stripHeadersLower = ['content-encoding', 'transfer-encoding', 'content-length'];
     foreach (array_keys($responseHeaders) as $hKey) {
         if (in_array(strtolower($hKey), $stripHeadersLower, true)) {
@@ -414,13 +569,10 @@ register_shutdown_function(function () use (
 
     $statusText = ddless_response_status_text($statusCode) ?? 'OK';
 
-    // Write the HTTP response to STDOUT using fwrite to bypass any remaining output buffering
     fwrite(STDOUT, sprintf("HTTP/1.1 %d %s\r\n", $statusCode, $statusText));
-
     foreach ($responseHeaders as $name => $value) {
         fwrite(STDOUT, sprintf("%s: %s\r\n", $name, $value));
     }
-
     fwrite(STDOUT, sprintf("Content-Length: %d\r\n", strlen($capturedOutput)));
     fwrite(STDOUT, "\r\n");
     fwrite(STDOUT, $capturedOutput);
@@ -480,11 +632,6 @@ register_shutdown_function(function () use (
         ];
     }
 
-    $variables = [
-        'query' => $requestSummary['query'],
-        'post' => $requestSummary['input'],
-    ];
-
     $snapshot = [
         'timestamp' => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
         'sessionId' => null,
@@ -512,7 +659,10 @@ register_shutdown_function(function () use (
             ],
             'breakpoints' => $breakpoints,
             'hitBreakpoints' => [],
-            'variables' => $variables,
+            'variables' => [
+                'query' => $requestSummary['query'],
+                'post' => $requestSummary['input'],
+            ],
             'callStack' => [],
             'error' => $errorInfo,
         ],
@@ -577,7 +727,6 @@ $GLOBALS['wp_filter']['rest_pre_serve_request'] = [
                     if (function_exists('is_user_logged_in') && is_user_logged_in()) {
                         if (function_exists('wp_get_nocache_headers')) {
                             foreach (wp_get_nocache_headers() as $name => $value) {
-                                // wp_get_nocache_headers returns e.g. 'Cache-Control' => 'no-cache, ...'
                                 $__ddless_wp_headers[$name] = (string)$value;
                             }
                         }
