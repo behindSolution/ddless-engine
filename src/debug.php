@@ -2470,102 +2470,205 @@ function ddless_cleanup_cache(array &$cacheIndex): int
     return $removed;
 }
 
+// ---------------------------------------------------------------------------
+// Manifest: skip full file scan when nothing changed (TTL-based)
+// ---------------------------------------------------------------------------
+
+function ddless_get_manifest_path(): string
+{
+    return ddless_get_cache_dir() . '/manifest.json';
+}
+
+function ddless_compute_context_hash(): string
+{
+    // Hash of breakpoint files + debug scope — if either changes, we must re-scan
+    $bpFiles = array_keys($GLOBALS['__DDLESS_BREAKPOINT_FILES__'] ?? []);
+    sort($bpFiles);
+    $scope = getenv('DDLESS_DEBUG_SCOPE') ?: '';
+    return md5(implode("\0", $bpFiles) . '|' . $scope);
+}
+
+function ddless_try_manifest_fast_path(): bool
+{
+    $manifestPath = ddless_get_manifest_path();
+    if (!is_file($manifestPath)) {
+        return false;
+    }
+
+    $raw = @file_get_contents($manifestPath);
+    if ($raw === false) {
+        return false;
+    }
+
+    $manifest = json_decode($raw, true);
+    if (!is_array($manifest)) {
+        return false;
+    }
+
+    // Check if breakpoints or scope changed
+    if (($manifest['contextHash'] ?? '') !== ddless_compute_context_hash()) {
+        return false;
+    }
+
+    // Check cache version
+    if (($manifest['cacheVersion'] ?? '') !== DDLESS_CACHE_VERSION) {
+        return false;
+    }
+
+    // Fast path: load all files from cache without scanning filesystem
+    $cacheIndex = ddless_load_cache_index();
+    $filePaths = $manifest['files'] ?? [];
+    $loaded = 0;
+
+    foreach ($filePaths as $realPath) {
+        if (isset($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$realPath])) {
+            $loaded++;
+            continue;
+        }
+
+        // Files with breakpoints must be re-instrumented (breakpoint lines change)
+        $hasBreakpoints = isset($GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$realPath]);
+        if ($hasBreakpoints) {
+            $instrumented = ddless_instrument_php_file($realPath);
+        } else {
+            $instrumented = ddless_load_from_cache($realPath, $cacheIndex);
+        }
+
+        if ($instrumented !== null) {
+            $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$realPath] = $instrumented;
+            $loaded++;
+        }
+    }
+
+    ddless_log("[ddless] Manifest fast path: {$loaded} files loaded from cache\n");
+    return true;
+}
+
+function ddless_save_manifest(array $filePaths): void
+{
+    if (!ddless_ensure_cache_dir()) {
+        return;
+    }
+
+    $manifest = [
+        'contextHash' => ddless_compute_context_hash(),
+        'cacheVersion' => DDLESS_CACHE_VERSION,
+        'files' => $filePaths,
+    ];
+
+    @file_put_contents(ddless_get_manifest_path(), json_encode($manifest, JSON_UNESCAPED_SLASHES));
+}
+
+// ---------------------------------------------------------------------------
+// Full instrumentation (with manifest save at the end)
+// ---------------------------------------------------------------------------
+
 function ddless_instrument_all_project_files(): int
 {
+    // Try manifest fast path first (skip scan if nothing changed)
+    if (ddless_try_manifest_fast_path()) {
+        return count($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'] ?? []);
+    }
+
     $projectRoot = defined('DDLESS_PROJECT_ROOT') ? DDLESS_PROJECT_ROOT : dirname(__DIR__);
-    
+
     ddless_log("[ddless] Starting project instrumentation with cache...\n");
     $startTime = microtime(true);
-    
+
     $cacheIndex = ddless_load_cache_index();
     $cacheHits = 0;
     $cacheMisses = 0;
     $cacheIndexModified = false;
-    
+
     $cleanedUp = ddless_cleanup_cache($cacheIndex);
     if ($cleanedUp > 0) {
         ddless_log("[ddless][cache] Cleaned up {$cleanedUp} stale cache entries\n");
         $cacheIndexModified = true;
     }
-    
+
     $allFiles = ddless_find_all_php_files($projectRoot);
     $totalFiles = count($allFiles);
     ddless_log("[ddless] Found {$totalFiles} PHP files in project\n");
-    
+
     ddless_emit_progress(0, $totalFiles, 'Checking cache...');
-    
+
     $instrumentedCount = 0;
     $skippedCount = 0;
     $processedCount = 0;
     $lastProgressUpdate = 0;
-    
+    $manifestFiles = [];
+
     foreach ($allFiles as $absolutePath) {
         $processedCount++;
-        
+
         if (isset($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$absolutePath])) {
             continue;
         }
-        
+
         $realPath = realpath($absolutePath) ?: $absolutePath;
-        
+
         $projectRootNorm = str_replace('\\', '/', rtrim($projectRoot, '/\\'));
         $pathNorm = str_replace('\\', '/', $realPath);
-        
+
         if (strpos($pathNorm, $projectRootNorm) === 0) {
             $relativePath = ltrim(substr($pathNorm, strlen($projectRootNorm)), '/');
         } else {
             $relativePath = basename($realPath);
         }
-        
+
         if ($processedCount - $lastProgressUpdate >= 10) {
             ddless_emit_progress($processedCount, $totalFiles, $relativePath);
             $lastProgressUpdate = $processedCount;
         }
-        
+
         $hasBreakpoints = isset($GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$realPath]) ||
                           isset($GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$absolutePath]);
-        
+
         $instrumented = null;
-        
+
         if (!$hasBreakpoints && !ddless_file_has_changed($realPath, $cacheIndex)) {
             $instrumented = ddless_load_from_cache($realPath, $cacheIndex);
             if ($instrumented !== null) {
                 $cacheHits++;
             }
         }
-        
+
         if ($instrumented === null) {
             $cacheMisses++;
-            
+
             if ($hasBreakpoints) {
                 $instrumented = ddless_instrument_php_file($realPath);
             } else {
                 $instrumented = ddless_instrument_php_file_ondemand($realPath, true);
             }
-            
+
             if ($instrumented !== null && !$hasBreakpoints) {
                 ddless_save_to_cache($realPath, $instrumented, $cacheIndex);
                 $cacheIndexModified = true;
             }
         }
-        
+
         if ($instrumented !== null) {
             $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$realPath] = $instrumented;
+            $manifestFiles[] = $realPath;
             $instrumentedCount++;
         } else {
             $skippedCount++;
         }
     }
-    
+
     if ($cacheIndexModified) {
         ddless_save_cache_index($cacheIndex);
     }
-    
+
+    // Save manifest for fast path on subsequent requests
+    ddless_save_manifest($manifestFiles);
+
     ddless_emit_progress($totalFiles, $totalFiles, 'Complete');
-    
+
     $elapsed = round((microtime(true) - $startTime) * 1000);
     ddless_log("[ddless] Instrumentation complete: {$instrumentedCount} files ready ({$cacheHits} from cache, {$cacheMisses} instrumented, {$skippedCount} skipped) in {$elapsed}ms\n");
-    
+
     return $instrumentedCount;
 }
 

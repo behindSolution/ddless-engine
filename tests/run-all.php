@@ -20,6 +20,7 @@ $testFiles = [
     'HttpRequestTest.php',
     'EvalInContextTest.php',
     'BreakpointTimeoutTest.php',
+    'ManifestCacheTest.php',
 ];
 
 foreach ($testFiles as $file) {
