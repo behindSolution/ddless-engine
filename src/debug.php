@@ -2476,7 +2476,7 @@ function ddless_cleanup_cache(array &$cacheIndex): int
 
 function ddless_get_manifest_path(): string
 {
-    return ddless_get_cache_dir() . '/manifest.json';
+    return ddless_get_session_dir() . '/manifest.json';
 }
 
 function ddless_compute_context_hash(): string
