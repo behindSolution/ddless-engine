@@ -346,14 +346,26 @@ if (!$entryPoint) {
 
 if (!$entryPoint) {
     fwrite(STDERR, "[ddless] No entry point found. Set DDLESS_ENTRY_POINT or create index.php.\n");
-    echo "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nDDLess: No entry point configured.";
+    if (php_sapi_name() === 'cli-server') {
+        http_response_code(500);
+        header('Content-Type: text/plain');
+        echo "DDLess: No entry point configured.";
+    } else {
+        echo "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nDDLess: No entry point configured.";
+    }
     exit(1);
 }
 
 $entryPointAbsolute = $projectRoot . '/' . ltrim(str_replace('\\', '/', $entryPoint), '/');
 if (!is_file($entryPointAbsolute)) {
     fwrite(STDERR, "[ddless] Entry point not found: {$entryPointAbsolute}\n");
-    echo "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nDDLess: Entry point not found: {$entryPoint}";
+    if (php_sapi_name() === 'cli-server') {
+        http_response_code(500);
+        header('Content-Type: text/plain');
+        echo "DDLess: Entry point not found: {$entryPoint}";
+    } else {
+        echo "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nDDLess: Entry point not found: {$entryPoint}";
+    }
     exit(1);
 }
 
@@ -419,15 +431,23 @@ if (function_exists('headers_list')) {
 
 $responseContentType = $responseHeaders['Content-Type'] ?? $responseHeaders['content-type'] ?? null;
 
-$statusText = ddless_response_status_text($statusCode) ?? 'OK';
-echo sprintf("HTTP/1.1 %d %s\r\n", $statusCode, $statusText);
+if (php_sapi_name() === 'cli-server') {
+    // Running under php -S (browser debug server) — headers are managed natively.
+    // Just set the status code and output the captured body directly.
+    http_response_code($statusCode);
+    echo $capturedOutput;
+} else {
+    // CLI trigger mode — output raw HTTP format for parsePhpdbgHttpResponse() in Electron.
+    $statusText = ddless_response_status_text($statusCode) ?? 'OK';
+    echo sprintf("HTTP/1.1 %d %s\r\n", $statusCode, $statusText);
 
-foreach ($responseHeaders as $name => $value) {
-    echo sprintf("%s: %s\r\n", $name, $value);
+    foreach ($responseHeaders as $name => $value) {
+        echo sprintf("%s: %s\r\n", $name, $value);
+    }
+
+    echo "\r\n";
+    echo $capturedOutput;
 }
-
-echo "\r\n";
-echo $capturedOutput;
 
 // Snapshot Generation
 $executionFinishedAt = microtime(true);

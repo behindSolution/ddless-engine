@@ -51,8 +51,13 @@ if (getenv('DDLESS_DEBUG_MODE') === 'true') {
     require_once __DIR__ . '/debug.php';
 }
 
-// Inject custom server variables from environment
-$serverVarsJson = getenv('DDLESS_SERVER_VARIABLES');
+// Inject custom server variables (file-based per-session, refreshed per-request)
+$serverVarsFile = __DIR__ . '/sessions/' . $sessionId . '/server_variables.json';
+$serverVarsJson = is_file($serverVarsFile) ? @file_get_contents($serverVarsFile) : false;
+// Fallback to env var (set at server start)
+if ($serverVarsJson === false || $serverVarsJson === '') {
+    $serverVarsJson = getenv('DDLESS_SERVER_VARIABLES');
+}
 if ($serverVarsJson !== false && $serverVarsJson !== '') {
     $customVars = json_decode($serverVarsJson, true);
     if (is_array($customVars)) {
