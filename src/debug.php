@@ -187,9 +187,8 @@ $GLOBALS['__DDLESS_BREAKPOINT_TIMEOUT__'] = 3600; // Default: 60 minutes (in sec
 
 $GLOBALS['__DDLESS_MODIFIED_VARS__'] = null; // Playground: modified variables to extract back into scope
 
-$GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null; // Step Over: only stop in this function
-$GLOBALS['__DDLESS_STEP_OVER_DEPTH__'] = null; // Step Over: only stop at this call stack depth or less
-$GLOBALS['__DDLESS_STEP_OVER_FILE__'] = null; // Step Over: file where step started (for closure detection)
+$GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null;
+$GLOBALS['__DDLESS_STEP_OVER_FILE__'] = null;
 $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false; // Step In: stop on any next line (enters functions)
 $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null; // Step Out: stop when we return to this function
 
@@ -613,7 +612,7 @@ function ddless_instrument_code_with_ast(string $code, string $absolutePath, str
             $condDumpExpressions = str_replace(["\\", "'"], ["\\\\", "\\'"], $condDumpData['expressions'] ?? '');
         }
 
-        $stepCall = "\\ddless_step_check('{$escapedPath}', {$lineNum}, '{$escapedRelative}', {$isUserBpStr}, '{$escapedCondition}', get_defined_vars(), debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT, 32), '{$escapedLogpoint}', '{$escapedDump}', '{$condDumpCondition}', '{$condDumpExpressions}')";
+        $stepCall = "\\ddless_step_check('{$escapedPath}', {$lineNum}, '{$escapedRelative}', {$isUserBpStr}, '{$escapedCondition}', get_defined_vars(), debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT, 128), '{$escapedLogpoint}', '{$escapedDump}', '{$condDumpCondition}', '{$condDumpExpressions}')";
         $extractModified = 'if (!empty($GLOBALS[\'__DDLESS_MODIFIED_VARS__\'])) { extract($GLOBALS[\'__DDLESS_MODIFIED_VARS__\'], EXTR_OVERWRITE); $GLOBALS[\'__DDLESS_MODIFIED_VARS__\'] = null; }';
 
         if ($type === 'elseif') {
@@ -1287,10 +1286,8 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
         return;
     }
     
-    // Get current execution context
     $context = ddless_get_current_function_info($scopeBacktrace);
     $currentFunction = $context['function'];
-    $currentDepth = $context['depth'];
     
     // STEP IN MODE: Stop on ANY next line (enters functions)
     if ($GLOBALS['__DDLESS_STEP_IN_MODE__'] ?? false) {
@@ -1299,30 +1296,34 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
         return;
     }
     
-    // STEP OVER MODE: Stop only in the SAME function (don't enter called functions)
     if ($GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] !== null) {
         $targetFunction = $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'];
-        $targetDepth = $GLOBALS['__DDLESS_STEP_OVER_DEPTH__'] ?? PHP_INT_MAX;
         $targetFile = $GLOBALS['__DDLESS_STEP_OVER_FILE__'] ?? null;
 
-        // 1. We're in the same function, OR
-        // 2. We've returned from a called function (depth decreased or equal), OR
-        // 3. We're inside a closure defined in the same file (inline logic like Eloquent callbacks)
-        $isSameFunction = ($currentFunction === $targetFunction);
-        $hasReturnedFromCall = ($currentDepth <= $targetDepth);
-        $isSameFileClosure = ($targetFile !== null && $file === $targetFile && str_contains($currentFunction, '{closure}'));
-        $shouldStop = $isSameFunction || $hasReturnedFromCall || $isSameFileClosure;
+        $targetOccurrencesInStack = 0;
+        foreach ($scopeBacktrace as $frame) {
+            $fn = $frame['function'] ?? '';
+            if (str_starts_with($fn, 'ddless_')) continue;
+            $fullName = ($frame['class'] ?? '') . ($frame['type'] ?? '') . $fn;
+            if ($fullName === $targetFunction) {
+                $targetOccurrencesInStack++;
+            }
+        }
 
-        ddless_log("[ddless] Step-over check at {$relativePath}:{$line} - current: {$currentFunction}({$currentDepth}), target: {$targetFunction}({$targetDepth}), shouldStop: " . ($shouldStop ? 'yes' : 'no') . ($isSameFileClosure ? ' (closure)' : '') . "\n");
+        $isSameFunction = ($currentFunction === $targetFunction);
+        $isSameFileClosure = ($targetFile !== null && $file === $targetFile && str_contains($currentFunction, '{closure}'));
+        $isOriginalInvocation = ($isSameFunction && $targetOccurrencesInStack <= 1);
+        $hasReturnedFromTarget = ($targetOccurrencesInStack === 0);
+        $shouldStop = $isOriginalInvocation || $isSameFileClosure || $hasReturnedFromTarget;
+
+        ddless_log("[ddless] Step-over check at {$relativePath}:{$line} - current: {$currentFunction}, target: {$targetFunction}, occurrences: {$targetOccurrencesInStack}, shouldStop: " . ($shouldStop ? 'yes' : 'no') . ($isSameFileClosure ? ' (closure)' : '') . "\n");
 
         if ($shouldStop) {
             $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null;
-            $GLOBALS['__DDLESS_STEP_OVER_DEPTH__'] = null;
             $GLOBALS['__DDLESS_STEP_OVER_FILE__'] = null;
             ddless_handle_breakpoint($file, $line, $relativePath, $scopeVariables, $scopeBacktrace);
             return;
         }
-        // Otherwise, continue executing (we're inside a called function in another file)
         return;
     }
     
@@ -1988,7 +1989,6 @@ function ddless_handle_breakpoint(
             ddless_cleanup_debug_files();
             $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false;
             $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null;
-            $GLOBALS['__DDLESS_STEP_OVER_DEPTH__'] = null;
             $GLOBALS['__DDLESS_STEP_OVER_FILE__'] = null;
             $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null;
             $timeoutPayload = json_encode([
@@ -2095,7 +2095,6 @@ function ddless_handle_breakpoint(
     $resetAllStepModes = function() {
         $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false;
         $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null;
-        $GLOBALS['__DDLESS_STEP_OVER_DEPTH__'] = null;
         $GLOBALS['__DDLESS_STEP_OVER_FILE__'] = null;
         $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null;
     };
@@ -2142,9 +2141,8 @@ function ddless_handle_breakpoint(
             $resetAllStepModes();
             $ctx = $getContext();
             $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = $ctx['function'];
-            $GLOBALS['__DDLESS_STEP_OVER_DEPTH__'] = $ctx['depth'];
             $GLOBALS['__DDLESS_STEP_OVER_FILE__'] = $file;
-            ddless_log("[ddless] Next (Step Over) - will stop at next line in: " . ($ctx['function'] ?? 'top-level') . " (depth: {$ctx['depth']})\n");
+            ddless_log("[ddless] Next (Step Over) - will stop at next line in: " . ($ctx['function'] ?? 'top-level') . "\n");
             break;
 
         case 'step_in':

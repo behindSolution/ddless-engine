@@ -183,20 +183,20 @@ test('all step modes are reset after timeout simulation', function () {
     $GLOBALS['__DDLESS_STEP_IN_MODE__'] = true;
     $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = 'someFunction';
     $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = 'anotherFunction';
-    $GLOBALS['__DDLESS_STEP_OVER_DEPTH__'] = 3;
+    $GLOBALS['__DDLESS_STEP_OVER_FILE__'] = '/some/file.php';
 
-    // Simulate the timeout reset logic from ddless_handle_breakpoint (lines 1906-1911)
+    // Simulate the timeout reset logic from ddless_handle_breakpoint
     $GLOBALS['__DDLESS_STEP_OVER__'] = false;
     $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false;
     $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null;
     $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null;
-    $GLOBALS['__DDLESS_STEP_OVER_DEPTH__'] = null;
+    $GLOBALS['__DDLESS_STEP_OVER_FILE__'] = null;
 
     assert_false($GLOBALS['__DDLESS_STEP_OVER__'], 'step over should be false');
     assert_false($GLOBALS['__DDLESS_STEP_IN_MODE__'], 'step in should be false');
     assert_null($GLOBALS['__DDLESS_STEP_OUT_TARGET__'], 'step out target should be null');
     assert_null($GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'], 'step over function should be null');
-    assert_null($GLOBALS['__DDLESS_STEP_OVER_DEPTH__'], 'step over depth should be null');
+    assert_null($GLOBALS['__DDLESS_STEP_OVER_FILE__'], 'step over file should be null');
 });
 
 // Print results if run standalone

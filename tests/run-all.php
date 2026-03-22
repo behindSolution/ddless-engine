@@ -21,6 +21,9 @@ $testFiles = [
     'EvalInContextTest.php',
     'BreakpointTimeoutTest.php',
     'ManifestCacheTest.php',
+    'StepOverLogicTest.php',
+    'StepInLogicTest.php',
+    'StepOutLogicTest.php',
 ];
 
 foreach ($testFiles as $file) {
