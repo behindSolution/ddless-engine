@@ -400,6 +400,10 @@ if (getenv('DDLESS_DEBUG_MODE') === 'true') {
 // Change to project root so relative includes work
 chdir($projectRoot);
 
+ini_set('display_errors', 'stderr');
+ini_set('log_errors', '1');
+error_reporting(E_ALL);
+
 // Capture output
 ob_start();
 $phpError = null;
