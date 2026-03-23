@@ -157,89 +157,100 @@ function ddless_register_terminal_handler(): void
         $variables = $payload['variables'] ?? [];
         $callStack = $payload['callStack'] ?? [];
 
-        // Erase previous debug block
-        $prevLines = $GLOBALS['__DDLESS_TERMINAL_LINES__'] ?? 0;
-        if ($prevLines > 0) {
-            fwrite(STDERR, "\033[{$prevLines}A\033[J");
-        }
-
-        $output = [];
-
-        // Header
-        $output[] = '';
-        $output[] = CLR_BOLD . CLR_YELLOW . "  ● Breakpoint" . CLR_RESET . " at "
-            . CLR_CYAN . $relativePath . CLR_RESET . ":" . CLR_BOLD . $line . CLR_RESET;
-
-        // Call stack
-        if (!empty($callStack) && count($callStack) > 1) {
-            $stackLabels = [];
-            foreach (array_slice($callStack, 0, 5) as $frame) {
-                $stackLabels[] = CLR_DIM . ($frame['label'] ?? '?') . CLR_RESET;
+        $drawDebugView = function () use ($relativePath, $line, $variables, $callStack, $file) {
+            $prevLines = $GLOBALS['__DDLESS_TERMINAL_LINES__'] ?? 0;
+            if ($prevLines > 0) {
+                fwrite(STDERR, "\033[{$prevLines}A\033[J");
             }
-            $output[] = CLR_DIM . "  Stack: " . CLR_RESET . implode(CLR_DIM . ' → ' . CLR_RESET, $stackLabels);
-        }
 
-        // Source code — read original file (bypass stream wrapper)
-        @stream_wrapper_restore('file');
-        $content = @file_get_contents($file);
-        @stream_wrapper_unregister('file');
-        @stream_wrapper_register('file', 'DDLessSafeIncludeWrapper', 0);
+            $output = [];
+            $output[] = '';
+            $output[] = CLR_BOLD . CLR_YELLOW . "  ● Breakpoint" . CLR_RESET . " at "
+                . CLR_CYAN . $relativePath . CLR_RESET . ":" . CLR_BOLD . $line . CLR_RESET;
 
-        if ($content !== false) {
-            $srcLines = explode("\n", $content);
-            $context = 4;
-            $start = max(0, $line - $context - 1);
-            $end = min(count($srcLines), $line + $context);
+            if (!empty($callStack) && count($callStack) > 1) {
+                $stackLabels = [];
+                foreach (array_slice($callStack, 0, 5) as $frame) {
+                    $stackLabels[] = CLR_DIM . ($frame['label'] ?? '?') . CLR_RESET;
+                }
+                $output[] = CLR_DIM . "  Stack: " . CLR_RESET . implode(CLR_DIM . ' → ' . CLR_RESET, $stackLabels);
+            }
+
+            @stream_wrapper_restore('file');
+            $content = @file_get_contents($file);
+            @stream_wrapper_unregister('file');
+            @stream_wrapper_register('file', 'DDLessSafeIncludeWrapper', 0);
+
+            if ($content !== false) {
+                $srcLines = explode("\n", $content);
+                $context = 4;
+                $start = max(0, $line - $context - 1);
+                $end = min(count($srcLines), $line + $context);
+
+                $output[] = CLR_DIM . "  ──────────────────────────────────────────" . CLR_RESET;
+                for ($i = $start; $i < $end; $i++) {
+                    $lineNum = $i + 1;
+                    $numStr = str_pad((string) $lineNum, 4, ' ', STR_PAD_LEFT);
+                    $codeLine = rtrim($srcLines[$i]);
+
+                    if ($lineNum === $line) {
+                        $output[] = CLR_BG_YELLOW . CLR_WHITE . "  {$numStr}" . CLR_RESET
+                            . CLR_BG_YELLOW . CLR_WHITE . "│ " . CLR_RESET
+                            . CLR_BOLD . " {$codeLine}" . CLR_RESET . "  ◄";
+                    } else {
+                        $output[] = CLR_DIM . "  {$numStr}│ " . CLR_RESET . "{$codeLine}";
+                    }
+                }
+                $output[] = CLR_DIM . "  ──────────────────────────────────────────" . CLR_RESET;
+            }
+
+            $output[] = '';
+            fwrite(STDERR, implode("\n", $output) . "\n");
+            $GLOBALS['__DDLESS_TERMINAL_LINES__'] = count($output) + 2;
+        };
+
+        $drawVarsView = function () use ($relativePath, $line, $variables) {
+            $prevLines = $GLOBALS['__DDLESS_TERMINAL_LINES__'] ?? 0;
+            if ($prevLines > 0) {
+                fwrite(STDERR, "\033[{$prevLines}A\033[J");
+            }
+
+            $output = [];
+            $output[] = '';
+            $output[] = CLR_BOLD . CLR_BLUE . "  ◈ Variables" . CLR_RESET . " at "
+                . CLR_CYAN . $relativePath . CLR_RESET . ":" . CLR_BOLD . $line . CLR_RESET;
+            $output[] = CLR_DIM . "  ──────────────────────────────────────────" . CLR_RESET;
+
+            if (empty($variables)) {
+                $output[] = CLR_DIM . "    (no variables in scope)" . CLR_RESET;
+            } else {
+                foreach ($variables as $name => $value) {
+                    if ($name === '__ddless_notice__') {
+                        $output[] = CLR_DIM . "    ({$value})" . CLR_RESET;
+                        continue;
+                    }
+                    $formatted = ddless_terminal_format_value($value, 4, 0, 5);
+                    $output[] = "    " . CLR_BLUE . '$' . $name . CLR_RESET . " = " . $formatted;
+                }
+            }
 
             $output[] = CLR_DIM . "  ──────────────────────────────────────────" . CLR_RESET;
-            for ($i = $start; $i < $end; $i++) {
-                $lineNum = $i + 1;
-                $numStr = str_pad((string) $lineNum, 4, ' ', STR_PAD_LEFT);
-                $codeLine = rtrim($srcLines[$i]);
-
-                if ($lineNum === $line) {
-                    $output[] = CLR_BG_YELLOW . CLR_WHITE . "  {$numStr}" . CLR_RESET
-                        . CLR_BG_YELLOW . CLR_WHITE . "│ " . CLR_RESET
-                        . CLR_BOLD . " {$codeLine}" . CLR_RESET . "  ◄";
-                } else {
-                    $output[] = CLR_DIM . "  {$numStr}│ " . CLR_RESET . "{$codeLine}";
-                }
-            }
-            $output[] = CLR_DIM . "  ──────────────────────────────────────────" . CLR_RESET;
-        }
-
-        // Variables
-        if (!empty($variables)) {
-            $output[] = CLR_BOLD . "  Variables:" . CLR_RESET;
-            $count = 0;
-            foreach ($variables as $name => $value) {
-                if ($name === '__ddless_notice__') {
-                    $output[] = CLR_DIM . "    ({$value})" . CLR_RESET;
-                    continue;
-                }
-                $formatted = ddless_terminal_format_value($value);
-                $output[] = "    " . CLR_BLUE . '$' . $name . CLR_RESET . " = " . $formatted;
-                $count++;
-                if ($count >= 20) {
-                    $output[] = CLR_DIM . "    ... (more variables omitted)" . CLR_RESET;
-                    break;
-                }
-            }
-        }
-
-        $output[] = '';
+            $output[] = '';
+            fwrite(STDERR, implode("\n", $output) . "\n");
+            $GLOBALS['__DDLESS_TERMINAL_LINES__'] = count($output) + 2;
+        };
 
         $promptLine = "  " . CLR_DIM . "[" . CLR_RESET . CLR_BOLD . "c" . CLR_RESET . CLR_DIM
             . "]ontinue  [" . CLR_RESET . CLR_BOLD . "n" . CLR_RESET . CLR_DIM
             . "]ext  [" . CLR_RESET . CLR_BOLD . "s" . CLR_RESET . CLR_DIM
             . "]tep  [" . CLR_RESET . CLR_BOLD . "o" . CLR_RESET . CLR_DIM
-            . "]ut  [" . CLR_RESET . CLR_BOLD . "q" . CLR_RESET . CLR_DIM
+            . "]ut  [" . CLR_RESET . CLR_BOLD . "d" . CLR_RESET . CLR_DIM
+            . "]ebug  [" . CLR_RESET . CLR_BOLD . "q" . CLR_RESET . CLR_DIM
             . "]uit" . CLR_RESET . " > ";
 
-        fwrite(STDERR, implode("\n", $output) . "\n");
-        $GLOBALS['__DDLESS_TERMINAL_LINES__'] = count($output) + 2;
+        $showingVars = false;
+        $drawDebugView();
 
-        // Read command
         while (true) {
             fwrite(STDERR, $promptLine);
 
@@ -251,6 +262,10 @@ function ddless_register_terminal_handler(): void
                 case 'n': case 'next':     return 'next';
                 case 's': case 'step': case 'step_in':  return 'step_in';
                 case 'o': case 'out':  case 'step_out': return 'step_out';
+                case 'd': case 'debug':
+                    $showingVars = !$showingVars;
+                    $showingVars ? $drawVarsView() : $drawDebugView();
+                    break;
                 case 'q': case 'quit': case 'exit':
                     fwrite(STDERR, CLR_YELLOW . "  Debug session ended." . CLR_RESET . "\n");
                     exit(0);
