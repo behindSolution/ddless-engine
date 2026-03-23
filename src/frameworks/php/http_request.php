@@ -333,7 +333,36 @@ if (file_exists($composerAutoload)) {
 }
 
 // Entry Point Resolution
+// Traditional PHP apps (like Dolibarr) map URLs directly to PHP files on disk.
+// If the URL path matches an existing .php file, execute that file instead of a fixed entry point.
 $entryPoint = getenv('DDLESS_ENTRY_POINT') ?: null;
+$requestUri = $_SERVER['REQUEST_URI'] ?? '/';
+$requestPath = parse_url($requestUri, PHP_URL_PATH) ?: '/';
+
+// Try to resolve the PHP file from the URL path (traditional PHP routing)
+if (!$entryPoint || $entryPoint === 'index.php') {
+    $urlCandidate = ltrim(str_replace('\\', '/', $requestPath), '/');
+
+    if ($urlCandidate !== '' && str_ends_with($urlCandidate, '.php')) {
+        $candidateAbsolute = $projectRoot . '/' . $urlCandidate;
+        if (is_file($candidateAbsolute)) {
+            $entryPoint = $urlCandidate;
+            fwrite(STDERR, "[ddless] URL maps to PHP file: {$entryPoint}\n");
+        }
+    }
+
+    // /admin/ → admin/index.php
+    if (!$entryPoint && $urlCandidate !== '' && !str_contains($urlCandidate, '.')) {
+        $dirCandidate = rtrim($urlCandidate, '/') . '/index.php';
+        $dirAbsolute = $projectRoot . '/' . $dirCandidate;
+        if (is_file($dirAbsolute)) {
+            $entryPoint = $dirCandidate;
+            fwrite(STDERR, "[ddless] URL maps to directory index: {$entryPoint}\n");
+        }
+    }
+}
+
+// Fallback to configured entry point or auto-detect
 if (!$entryPoint) {
     $candidates = ['public/index.php', 'index.php', 'wp-blog-header.php'];
     foreach ($candidates as $candidate) {
@@ -397,8 +426,10 @@ if (getenv('DDLESS_DEBUG_MODE') === 'true') {
     }
 }
 
-// Change to project root so relative includes work
-chdir($projectRoot);
+// Change CWD to the entry point's directory so relative includes work.
+// Traditional PHP apps (Dolibarr, etc.) use require('../file.php') which
+// resolves relative to CWD. Apache/nginx set CWD to the script's directory.
+chdir(dirname($entryPointAbsolute));
 
 ini_set('display_errors', 'stderr');
 ini_set('log_errors', '1');

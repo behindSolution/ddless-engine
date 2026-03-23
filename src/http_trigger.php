@@ -186,6 +186,28 @@ if (isset($normalizedHeaders['cookies']) && is_array($normalizedHeaders['cookies
 $projectRoot = dirname(__DIR__);
 $publicIndex = $projectRoot . '/public/index.php';
 $scriptFilename = is_file($publicIndex) ? $publicIndex : ($projectRoot . '/index.php');
+$scriptName = '/index.php';
+$documentRoot = dirname($scriptFilename);
+
+// Resolve SCRIPT_FILENAME from URL path for traditional PHP apps
+$urlPath = parse_url($uriFragment, PHP_URL_PATH) ?: '/';
+$urlCandidate = ltrim(str_replace('\\', '/', $urlPath), '/');
+if ($urlCandidate !== '' && substr($urlCandidate, -4) === '.php') {
+    $candidateAbsolute = $projectRoot . '/' . $urlCandidate;
+    if (is_file($candidateAbsolute)) {
+        $scriptFilename = $candidateAbsolute;
+        $scriptName = '/' . $urlCandidate;
+        $documentRoot = $projectRoot;
+    }
+} elseif ($urlCandidate !== '' && strpos($urlCandidate, '.') === false) {
+    $dirCandidate = rtrim($urlCandidate, '/') . '/index.php';
+    $dirAbsolute = $projectRoot . '/' . $dirCandidate;
+    if (is_file($dirAbsolute)) {
+        $scriptFilename = $dirAbsolute;
+        $scriptName = '/' . $dirCandidate;
+        $documentRoot = $projectRoot;
+    }
+}
 
 $server = array_merge($_SERVER, [
     'REQUEST_METHOD' => $method,
@@ -198,10 +220,10 @@ $server = array_merge($_SERVER, [
     'HTTPS' => $scheme === 'https' ? 'on' : 'off',
     'QUERY_STRING' => $queryString,
     'SERVER_PROTOCOL' => $_SERVER['SERVER_PROTOCOL'] ?? 'HTTP/1.1',
-    'SCRIPT_NAME' => '/index.php',
-    'PHP_SELF' => '/index.php',
+    'SCRIPT_NAME' => $scriptName,
+    'PHP_SELF' => $scriptName,
     'SCRIPT_FILENAME' => $scriptFilename,
-    'DOCUMENT_ROOT' => dirname($scriptFilename),
+    'DOCUMENT_ROOT' => $documentRoot,
 ]);
 
 if ($contentType !== null) {
