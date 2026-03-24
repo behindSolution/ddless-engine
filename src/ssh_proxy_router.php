@@ -17,6 +17,8 @@
  * - Dispatch to the appropriate framework handler
  */
 
+error_reporting(E_ALL & ~E_DEPRECATED);
+
 // Static files: let php -S serve them directly
 $uri = urldecode(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
 $publicDir = $_SERVER['DOCUMENT_ROOT'] ?? getcwd();

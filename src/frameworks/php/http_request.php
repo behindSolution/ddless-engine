@@ -431,9 +431,22 @@ if (getenv('DDLESS_DEBUG_MODE') === 'true') {
 // resolves relative to CWD. Apache/nginx set CWD to the script's directory.
 chdir(dirname($entryPointAbsolute));
 
+if (php_sapi_name() === 'cli-server') {
+    $_SERVER['SCRIPT_FILENAME'] = $entryPointAbsolute;
+    $entryPointUrl = '/' . ltrim(str_replace('\\', '/', $entryPoint), '/');
+    // Only fix SCRIPT_NAME/PHP_SELF if they don't match the resolved entry point
+    // (e.g. when URL maps to a different PHP file than what was requested)
+    if (isset($_SERVER['SCRIPT_NAME']) && $_SERVER['SCRIPT_NAME'] === '/.ddless/ssh_proxy_router.php') {
+        $_SERVER['SCRIPT_NAME'] = $entryPointUrl;
+    }
+    if (isset($_SERVER['PHP_SELF']) && $_SERVER['PHP_SELF'] === '/.ddless/ssh_proxy_router.php') {
+        $_SERVER['PHP_SELF'] = $entryPointUrl;
+    }
+}
+
 ini_set('display_errors', 'stderr');
 ini_set('log_errors', '1');
-error_reporting(E_ALL);
+error_reporting(E_ALL & ~E_DEPRECATED);
 
 // Capture output
 ob_start();

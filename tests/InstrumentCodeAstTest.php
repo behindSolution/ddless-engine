@@ -466,6 +466,106 @@ class Controller
     assert_eq(0, $exitCode, 'code with #[Route] must be valid PHP: ' . implode("\n", $output));
 });
 
+test('does not inject between switch { and case label', function () {
+    $code = '<?php
+function bean_implements($interface) {
+    switch ($interface) {
+        case "ACL": return true;
+    }
+    return false;
+}';
+    $result = ddless_instrument_code_with_ast($code, '/test/file.php', 'file.php');
+    assert_not_null($result);
+
+    // Must NOT have step_check between switch { and case
+    $resultLines = explode("\n", $result);
+    for ($i = 0; $i < count($resultLines); $i++) {
+        if (str_contains($resultLines[$i], 'switch (')) {
+            $next = trim($resultLines[$i + 1] ?? '');
+            assert_true(
+                !str_contains($next, 'ddless_step_check'),
+                'step_check must not be injected between switch { and case'
+            );
+        }
+    }
+
+    // Validate the instrumented code is parseable PHP
+    $tmpFile = tempnam(sys_get_temp_dir(), 'ddless_test_');
+    file_put_contents($tmpFile, $result);
+    $output = [];
+    $exitCode = 0;
+    exec('php -l ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
+    @unlink($tmpFile);
+    assert_eq(0, $exitCode, 'switch/case instrumented code must be valid PHP: ' . implode("\n", $output));
+});
+
+test('switch with separate case lines instruments correctly', function () {
+    $code = '<?php
+function getIcon($type) {
+    $icon = "";
+    switch ($type) {
+        case "full":
+            $icon = "Upgrade";
+            break;
+        case "patch":
+            $icon = "Patch";
+            break;
+        default:
+            $icon = "Unknown";
+            break;
+    }
+    return $icon;
+}';
+    $result = ddless_instrument_code_with_ast($code, '/test/file.php', 'file.php');
+    assert_not_null($result);
+
+    // step_check should exist before $icon assignments inside case blocks
+    assert_contains($result, 'ddless_step_check', 'should have instrumentation');
+
+    // Validate the instrumented code is parseable PHP
+    $tmpFile = tempnam(sys_get_temp_dir(), 'ddless_test_');
+    file_put_contents($tmpFile, $result);
+    $output = [];
+    $exitCode = 0;
+    exec('php -l ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
+    @unlink($tmpFile);
+    assert_eq(0, $exitCode, 'normal switch/case must be valid PHP: ' . implode("\n", $output));
+});
+
+test('switch with inline case+statement on same line', function () {
+    $code = '<?php
+function translate($key) {
+    switch ($key) {
+        case "yes": return true;
+        case "no": return false;
+        default: return null;
+    }
+}';
+    $result = ddless_instrument_code_with_ast($code, '/test/file.php', 'file.php');
+    assert_not_null($result);
+
+    // Lines starting with case should NOT have step_check before them
+    $resultLines = explode("\n", $result);
+    for ($i = 0; $i < count($resultLines); $i++) {
+        if (str_contains($resultLines[$i], 'ddless_step_check') && str_contains($resultLines[$i], '// DDLESS_BP')) {
+            $next = trim($resultLines[$i + 1] ?? '');
+            assert_true(
+                !preg_match('/^case\s/', $next) && !preg_match('/^default\s*:/', $next),
+                'step_check must not precede a case/default line: ' . $next
+            );
+        }
+    }
+
+    // Validate
+    $tmpFile = tempnam(sys_get_temp_dir(), 'ddless_test_');
+    file_put_contents($tmpFile, $result);
+    $output = [];
+    $exitCode = 0;
+    exec('php -l ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
+    @unlink($tmpFile);
+    assert_eq(0, $exitCode, 'inline case/return must be valid PHP: ' . implode("\n", $output));
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }

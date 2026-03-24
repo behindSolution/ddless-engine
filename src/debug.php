@@ -688,6 +688,14 @@ function ddless_instrument_code_with_ast(string $code, string $absolutePath, str
             continue;
         }
 
+        // Skip lines starting with case/default — injecting before would place
+        // code between switch { and the case label, causing a parse error.
+        // This happens when a statement shares a line with case, e.g.:
+        //   case 'ACL': return true;
+        if (preg_match('/^\s*(case\s|default\s*:)/', $lineContent)) {
+            continue;
+        }
+
         // Inline PHP block — inject INSIDE the opening tag
         if (preg_match('/^(\s*<\?php\s)/i', $lineContent)) {
             $safeStepCall = str_replace(['\\', '$'], ['\\\\', '\\$'], $stepCall);
@@ -769,7 +777,8 @@ function ddless_is_vendor_path(string $path): bool
     $normalized = str_replace('\\', '/', $path);
     return strpos($normalized, '/vendor/') !== false
         || strpos($normalized, '/node_modules/') !== false
-        || strpos($normalized, '/.ddless/') !== false;
+        || strpos($normalized, '/.ddless/') !== false
+        || strpos($normalized, '/cache/') !== false;
 }
 
 function ddless_is_step_mode_active(): bool
@@ -2227,7 +2236,7 @@ function ddless_find_all_php_files(string $directory): array
     }
 
     $files = [];
-    $excludeDirs = ['vendor', 'node_modules', '.ddless', 'storage', 'bootstrap/cache', '.git', '.idea', '.vscode'];
+    $excludeDirs = ['vendor', 'node_modules', '.ddless', 'storage', 'bootstrap/cache', 'cache', '.git', '.idea', '.vscode'];
 
     $iterator = new RecursiveIteratorIterator(
         new RecursiveCallbackFilterIterator(

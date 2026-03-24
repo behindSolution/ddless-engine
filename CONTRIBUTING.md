@@ -1,113 +1,60 @@
-# Contributing to DDLess Engine
+# Contributing
 
-Thanks for your interest in contributing! This document explains how to get started.
+## Setup
 
-## Getting Started
+Clone your fork at the root of a PHP project (alongside `composer.json`):
 
-1. Fork this repository
-2. Clone your fork at the root of a PHP project:
-   ```bash
-   cd /var/www/html          # your project root (must have composer.json)
-   git clone https://github.com/YOUR_USER/ddless-engine.git
-   cd ddless-engine
-   ```
-3. Make sure tests pass before making changes:
-   ```bash
-   php tests/run-all.php
-   ```
-
-## PHP Version Compatibility
-
-All code **must** work on PHP 7.4 through 8.4. This means:
-
-- No `mixed` type hints (use `#[\ReturnTypeWillChange]` where needed)
-- No named arguments in function calls
-- No `match` expressions
-- No enums (the engine detects them at runtime with `instanceof`)
-- No union types in signatures
-- No `readonly` properties
-- No fibers
-
-If you're unsure whether a feature is available on 7.4, check [php.net/migration80](https://www.php.net/migration80).
-
-## Project Structure
-
-```
-src/
-  debug.php              # Core engine (AST analysis, instrumentation, breakpoints)
-  http_trigger.php       # HTTP debug entry point
-  method_trigger.php     # Method debug entry point
-  task_trigger.php       # Task debug entry point
-  cli_trigger.php        # CLI debug entry point
-  frameworks/
-    laravel/             # Laravel-specific handlers
-    symfony/             # Symfony-specific handlers
-    codeigniter/         # CodeIgniter 4 handlers
-    tempest/             # Tempest handlers
-    wordpress/           # WordPress handlers
-    php/                 # Vanilla PHP handlers (minimal reference)
-  playground/            # Interactive terminal test suite
-  vendor-internal/       # Bundled PHP-Parser (do not modify)
-tests/
-  bootstrap.php          # Test runner and assertions
-  run-all.php            # Runs all test files
-  *Test.php              # Individual test files
+```bash
+cd /var/www/html
+git clone https://github.com/YOUR_USER/ddless-engine.git
+cd ddless-engine
+php tests/run-all.php   # make sure everything passes first
 ```
 
-## Playground — Testing Your Changes
+## PHP compatibility
 
-The playground lets you test the debug engine and framework integrations directly
-from the terminal, without the DDLess desktop app. Use it to validate your changes
-before submitting a PR.
+All code must run on PHP 7.4 through 8.4. That means no:
 
-### Setup
+- `mixed` type hints (use `#[\ReturnTypeWillChange]` where needed)
+- named arguments, `match`, union types, `readonly`, enums, fibers
 
-Clone ddless-engine **at the root of a real PHP project** (alongside `composer.json`):
+When in doubt: [php.net/migration80](https://www.php.net/migration80).
+
+## Playground
+
+The playground lets you test the engine and framework integrations from the terminal, without the desktop app. It expects ddless-engine to live inside a real PHP project:
 
 ```
-/var/www/html/                  ← your project root (has composer.json)
+/var/www/html/                  ← project root (has composer.json)
 ├── app/
 ├── vendor/
 ├── composer.json
-└── ddless-engine/              ← clone here
-    └── src/
-        ├── debug.php
-        ├── frameworks/
-        └── playground/
+└── ddless-engine/              ← your fork
 ```
 
-```bash
-cd /var/www/html                # go to your project root
-git clone https://github.com/YOUR_USER/ddless-engine.git
-cd ddless-engine                # all playground commands run from here
-```
+Each step validates a layer. If one fails, you know exactly where to look.
 
-The playground auto-detects your project root by looking for `composer.json`
-one directory above `ddless-engine/`. All breakpoint paths (e.g.
-`app/Services/OrderService.php:38`) resolve relative to that project root.
+### Engine test
 
-### Step 1 — Engine Test
-
-Validates the core debug engine (breakpoints, stepping, variable inspection).
+Validates breakpoints, stepping, and variable inspection:
 
 ```bash
-# Quick sanity check — no framework
 php src/playground/test_trigger.php --code '$x = 1; $y = 2; echo $x + $y;' --bp 2
 ```
 
-To test with a framework, create two files inside the ddless-engine directory:
+With a framework, create `boot.php` and a test file:
 
-**boot.php** — boots the framework (runs without stream wrapper):
 ```php
+// boot.php — boots the framework (runs without stream wrapper)
 <?php
-define('DDLESS_PROJECT_ROOT', dirname(__DIR__));  // points to actual project root
+define('DDLESS_PROJECT_ROOT', dirname(__DIR__));
 require __DIR__ . '/../vendor/autoload.php';
 $app = require __DIR__ . '/../bootstrap/app.php';
 $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 ```
 
-**test_orders.php** — what you want to test:
 ```php
+// test_orders.php
 <?php
 $service = app(\App\Services\OrderService::class);
 $result = $service->calculate(42);
@@ -115,63 +62,52 @@ var_dump($result);
 ```
 
 ```bash
-# Run with breakpoints inside the service code
 php src/playground/test_trigger.php --boot boot.php --file test_orders.php \
   --bp app/Services/OrderService.php:38
 ```
 
-`DDLESS_PROJECT_ROOT` in boot.php must point to your actual project root so that
-breakpoint paths like `app/Services/OrderService.php:38` resolve correctly.
+### Method test
 
-This is the first test when adding a new framework. If the boot works and breakpoints
-hit inside framework code, you understand the bootstrap — and can replicate it in
-the handlers.
-
-### Step 2 — Method Test
-
-Validates a framework's `method_executor.php` — resolves a class from the container
-and calls a method:
+Validates `method_executor.php` — resolves a class from the container and calls a method:
 
 ```bash
 php src/playground/test_trigger.php --test method --framework laravel \
   --class "App\Services\OrderService" --method calculate
 
-# With parameters
+# with parameters
 php src/playground/test_trigger.php --test method --framework laravel \
   --class "App\Services\OrderService" --method calculate \
   --params-file test_params.php
 
-# With breakpoints
+# with breakpoints
 php src/playground/test_trigger.php --test method --framework laravel \
   --class "App\Services\OrderService" --method calculate \
   --bp app/Services/OrderService.php:45
 ```
 
-### Step 3 — Task Test
+### Task test
 
-Validates a framework's `task_runner.php` — executes arbitrary PHP code with
-framework context:
+Validates `task_runner.php` — executes PHP code with framework context:
 
 ```bash
 php src/playground/test_trigger.php --test task --framework laravel \
   -c '$this->info("Users: " . User::count());' \
   -u "App\Models\User"
 
-# From a file
+# from a file
 php src/playground/test_trigger.php --test task --framework laravel \
   --file my_task.php
 ```
 
-### Step 4 — HTTP Test
+### HTTP test
 
-Validates a framework's `http_request.php` — sends real HTTP requests through
-the full pipeline:
+Validates `http_request.php` — sends real requests through the full pipeline:
 
 **Terminal 1:**
 ```bash
 DDLESS_FRAMEWORK=laravel php -S localhost:8080 src/playground/test_trigger.php
 
-# With breakpoints
+# with breakpoints
 DDLESS_FRAMEWORK=laravel DDLESS_BP="app/Http/Controllers/OrderController.php:45" \
   php -S localhost:8080 src/playground/test_trigger.php
 ```
@@ -183,30 +119,23 @@ curl -X POST http://localhost:8080/api/orders \
   -H "Content-Type: application/json" -d '{"item":"test"}'
 ```
 
-Each step validates a layer. If one fails, you know exactly where to look.
-See `src/playground/README.md` for full details and all options.
+See `src/playground/README.md` for all options and protocols.
 
-## Adding a New Framework
+## Adding a framework
 
-To add support for a new framework (e.g. CakePHP):
+To add support for a new framework (e.g. CakePHP), create `src/frameworks/cakephp/` with:
 
-1. Create `src/frameworks/cakephp/` with three files:
+| File | Purpose |
+|------|---------|
+| `method_executor.php` | Resolve class from container, call method, output result |
+| `task_runner.php` | Boot framework, eval user code with `DdlessTask` context |
+| `http_request.php` | Process HTTP request through the full middleware pipeline |
 
-   | File | Purpose |
-   |------|---------|
-   | `method_executor.php` | Resolve class from container, call method, output result |
-   | `task_runner.php` | Boot framework, eval user code with `DdlessTask` context |
-   | `http_request.php` | Process HTTP request through full middleware pipeline |
+Use `src/frameworks/php/` as a minimal reference and `src/frameworks/laravel/` as a full one. Validate with the playground steps above.
 
-2. Use `src/frameworks/php/` as a minimal reference and `src/frameworks/laravel/` as a full example.
+## Writing tests
 
-3. Test with the playground (Steps 2, 3, 4 above).
-
-4. See `src/playground/README.md` for input/output protocols of each handler.
-
-## Writing Tests
-
-Tests use a zero-dependency mini test runner defined in `tests/bootstrap.php`.
+Tests use a zero-dependency runner defined in `tests/bootstrap.php`:
 
 ```php
 <?php
@@ -230,22 +159,21 @@ if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
 
 Available assertions: `assert_eq`, `assert_true`, `assert_false`, `assert_null`, `assert_not_null`, `assert_contains`, `assert_not_contains`, `assert_array_has_key`, `assert_array_not_has_key`, `assert_count`.
 
-## Submitting Changes
+## Submitting changes
 
-1. Create a branch from `main`
-2. Write or update tests for your changes
-3. Test with the playground to validate framework integrations
-4. Make sure all tests pass: `php tests/run-all.php`
-5. Open a Pull Request with a clear description of what you changed and why
+1. Branch from `main`
+2. Write or update tests
+3. Validate with the playground
+4. `php tests/run-all.php` — all green
+5. Open a PR with a clear description of what and why
 
-## What Not to Modify
+## Don't modify
 
-- `src/vendor-internal/` — This is a bundled copy of nikic/PHP-Parser. Changes here will be overwritten.
+`src/vendor-internal/` is a bundled copy of nikic/PHP-Parser. Changes will be overwritten.
 
-## Reporting Issues
+## Reporting issues
 
-Open an issue on this repository. Include:
-
+Open an issue with:
 - PHP version (`php -v`)
-- A minimal code snippet that reproduces the problem
+- Minimal reproduction snippet
 - Expected vs actual behavior
