@@ -480,37 +480,44 @@ class DDLessInstrumentableLineVisitor extends \PhpParser\NodeVisitorAbstract
  */
 function ddless_analyze_code_ast(string $code, array $userBreakpointLines = []): array
 {
-    if (!isset($GLOBALS['__DDLESS_PHP_PARSER__'])) {
-        $GLOBALS['__DDLESS_PHP_PARSER__'] = (new \PhpParser\ParserFactory())
-            ->createForHostVersion();
-    }
-    $parser = $GLOBALS['__DDLESS_PHP_PARSER__'];
-
-    $errorHandler = new \PhpParser\ErrorHandler\Collecting();
+    $prevTimeLimit = (int) ini_get('max_execution_time');
+    set_time_limit(0);
 
     try {
-        $stmts = $parser->parse($code, $errorHandler);
-    } catch (\Throwable $e) {
-        ddless_log("[ddless] AST parse error: " . $e->getMessage() . "\n");
-        return [];
+        if (!isset($GLOBALS['__DDLESS_PHP_PARSER__'])) {
+            $GLOBALS['__DDLESS_PHP_PARSER__'] = (new \PhpParser\ParserFactory())
+                ->createForHostVersion();
+        }
+        $parser = $GLOBALS['__DDLESS_PHP_PARSER__'];
+
+        $errorHandler = new \PhpParser\ErrorHandler\Collecting();
+
+        try {
+            $stmts = $parser->parse($code, $errorHandler);
+        } catch (\Throwable $e) {
+            ddless_log("[ddless] AST parse error: " . $e->getMessage() . "\n");
+            return [];
+        }
+
+        if ($stmts === null) {
+            ddless_log("[ddless] AST parse returned null (fatal syntax error)\n");
+            return [];
+        }
+
+        $allowGlobalScope = !empty($GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__']);
+        $visitor = new DDLessInstrumentableLineVisitor($userBreakpointLines, $allowGlobalScope);
+        $traverser = new \PhpParser\NodeTraverser();
+        $traverser->addVisitor($visitor);
+        $traverser->traverse($stmts);
+
+        $lines = $visitor->getInstrumentableLines();
+
+        $lines = ddless_resolve_user_breakpoints($lines, $userBreakpointLines);
+
+        return $lines;
+    } finally {
+        set_time_limit($prevTimeLimit);
     }
-
-    if ($stmts === null) {
-        ddless_log("[ddless] AST parse returned null (fatal syntax error)\n");
-        return [];
-    }
-
-    $allowGlobalScope = !empty($GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__']);
-    $visitor = new DDLessInstrumentableLineVisitor($userBreakpointLines, $allowGlobalScope);
-    $traverser = new \PhpParser\NodeTraverser();
-    $traverser->addVisitor($visitor);
-    $traverser->traverse($stmts);
-
-    $lines = $visitor->getInstrumentableLines();
-
-    $lines = ddless_resolve_user_breakpoints($lines, $userBreakpointLines);
-
-    return $lines;
 }
 
 /**
