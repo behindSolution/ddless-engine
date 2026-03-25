@@ -500,13 +500,6 @@ if (php_sapi_name() === 'cli-server') {
         fwrite(STDERR, "[ddless] WordPress execution complete\n");
     });
 
-    // Boot WordPress directly — php -S handles HTTP natively
-    // WP_USE_THEMES must be defined before wp-blog-header.php (same as index.php)
-    if (!defined('WP_USE_THEMES')) {
-        define('WP_USE_THEMES', true);
-    }
-
-    // Override site URL so WordPress doesn't redirect to the DB-configured URL (without port)
     $currentHost = $_SERVER['HTTP_HOST'] ?? ('127.0.0.1' . (isset($_SERVER['SERVER_PORT']) ? ':' . $_SERVER['SERVER_PORT'] : ''));
     if (!defined('WP_HOME')) {
         define('WP_HOME', 'http://' . $currentHost);
@@ -515,13 +508,46 @@ if (php_sapi_name() === 'cli-server') {
         define('WP_SITEURL', 'http://' . $currentHost);
     }
 
-    try {
-        fwrite(STDERR, "[ddless] Booting WordPress via wp-blog-header.php...\n");
-        require $wpBlogHeader;
-        fwrite(STDERR, "[ddless] WordPress request handling completed.\n");
-    } catch (\Throwable $e) {
-        $__ddless_wp_error = $e;
-        fwrite(STDERR, "[ddless] WordPress threw: " . $e->getMessage() . "\n");
+    $requestUri = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+    $requestedFile = $projectRoot . rtrim($requestUri, '/');
+
+    // Redirect directories to trailing slash so relative links resolve correctly
+    if (is_dir($requestedFile) && !str_ends_with($requestUri, '/')) {
+        $query = $_SERVER['QUERY_STRING'] ?? '';
+        $redirectUrl = $requestUri . '/' . ($query !== '' ? '?' . $query : '');
+        header('Location: ' . $redirectUrl, true, 301);
+        return;
+    }
+
+    if (is_dir($requestedFile)) {
+        $requestedFile = rtrim($requestedFile, '/\\') . '/index.php';
+    }
+
+    $isDirectPhpFile = is_file($requestedFile)
+        && strtolower(pathinfo($requestedFile, PATHINFO_EXTENSION)) === 'php'
+        && realpath($requestedFile) !== realpath($wpBlogHeader)
+        && realpath($requestedFile) !== realpath($projectRoot . '/index.php');
+
+    if ($isDirectPhpFile) {
+        fwrite(STDERR, "[ddless] Direct PHP file: {$requestUri}\n");
+
+        try {
+            require $requestedFile;
+        } catch (\Throwable $e) {
+            $__ddless_wp_error = $e;
+            fwrite(STDERR, "[ddless] WordPress threw: " . $e->getMessage() . "\n");
+        }
+    } else {
+        if (!defined('WP_USE_THEMES')) {
+            define('WP_USE_THEMES', true);
+        }
+
+        try {
+            require $wpBlogHeader;
+        } catch (\Throwable $e) {
+            $__ddless_wp_error = $e;
+            fwrite(STDERR, "[ddless] WordPress threw: " . $e->getMessage() . "\n");
+        }
     }
 
     return; // Prevent falling into CLI mode below
