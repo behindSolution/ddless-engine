@@ -2627,16 +2627,29 @@ function ddless_save_manifest(array $filePaths): void
 // Full instrumentation (with manifest save at the end)
 // ---------------------------------------------------------------------------
 
+function ddless_has_debug_scope(): bool
+{
+    $scope = getenv('DDLESS_DEBUG_SCOPE');
+    return $scope !== false && $scope !== '';
+}
+
 function ddless_instrument_all_project_files(): int
 {
-    // Try manifest fast path first (skip scan if nothing changed)
     if (ddless_try_manifest_fast_path()) {
         return count($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'] ?? []);
     }
 
+    if (!ddless_has_debug_scope()) {
+        $bpFiles = array_keys($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'] ?? []);
+        ddless_save_manifest($bpFiles);
+        $count = count($bpFiles);
+        ddless_log("[ddless] No scope — breakpoint-only mode: {$count} files pre-instrumented (on-demand for stepping)\n");
+        return $count;
+    }
+
     $projectRoot = defined('DDLESS_PROJECT_ROOT') ? DDLESS_PROJECT_ROOT : dirname(__DIR__);
 
-    ddless_log("[ddless] Starting project instrumentation with cache...\n");
+    ddless_log("[ddless] Starting scoped instrumentation with cache...\n");
     $startTime = microtime(true);
 
     $cacheIndex = ddless_load_cache_index();
@@ -2646,13 +2659,12 @@ function ddless_instrument_all_project_files(): int
 
     $cleanedUp = ddless_cleanup_cache($cacheIndex);
     if ($cleanedUp > 0) {
-        ddless_log("[ddless][cache] Cleaned up {$cleanedUp} stale cache entries\n");
         $cacheIndexModified = true;
     }
 
     $allFiles = ddless_find_all_php_files($projectRoot);
     $totalFiles = count($allFiles);
-    ddless_log("[ddless] Found {$totalFiles} PHP files in project\n");
+    ddless_log("[ddless] Scope active — found {$totalFiles} PHP files\n");
 
     ddless_emit_progress(0, $totalFiles, 'Checking cache...');
 
@@ -2666,6 +2678,8 @@ function ddless_instrument_all_project_files(): int
         $processedCount++;
 
         if (isset($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$absolutePath])) {
+            $manifestFiles[] = $absolutePath;
+            $instrumentedCount++;
             continue;
         }
 
@@ -2725,13 +2739,12 @@ function ddless_instrument_all_project_files(): int
         ddless_save_cache_index($cacheIndex);
     }
 
-    // Save manifest for fast path on subsequent requests
     ddless_save_manifest($manifestFiles);
 
     ddless_emit_progress($totalFiles, $totalFiles, 'Complete');
 
     $elapsed = round((microtime(true) - $startTime) * 1000);
-    ddless_log("[ddless] Instrumentation complete: {$instrumentedCount} files ready ({$cacheHits} from cache, {$cacheMisses} instrumented, {$skippedCount} skipped) in {$elapsed}ms\n");
+    ddless_log("[ddless] Scoped instrumentation complete: {$instrumentedCount} files ({$cacheHits} cached, {$cacheMisses} instrumented, {$skippedCount} skipped) in {$elapsed}ms\n");
 
     return $instrumentedCount;
 }
