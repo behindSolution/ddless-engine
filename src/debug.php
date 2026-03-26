@@ -2040,11 +2040,39 @@ function ddless_handle_breakpoint(
                 continue;
             }
 
+            $blockedFunctions = [
+                'var_dump'   => 'Use a return statement instead — the playground formats values automatically.',
+                'var_export' => 'Use a return statement instead — the playground formats values automatically.',
+                'print_r'    => 'Use a return statement instead — the playground formats values automatically.',
+                'dump'       => 'Use a return statement instead — the playground formats values automatically.',
+                'dd'         => 'Use a return statement instead — the playground formats values automatically.',
+                'die'        => 'This would terminate the debug session.',
+                'exit'       => 'This would terminate the debug session.',
+                'echo'       => 'Use a return statement instead.',
+                'print'      => 'Use a return statement instead.',
+                'header'     => 'Headers cannot be sent during a debug session.',
+            ];
+            foreach ($blockedFunctions as $fn => $hint) {
+                if (preg_match('/\b' . preg_quote($fn, '/') . '\s*\(/i', $expression)) {
+                    $evalPayload = [
+                        'type' => 'evaluate_result',
+                        'sessionId' => $sessionId,
+                        'requestId' => $requestId,
+                        'success' => false,
+                        'result' => null,
+                        'error' => "{$fn}() is not allowed in the playground. {$hint}",
+                        'duration_ms' => 0,
+                    ];
+                    ddless_write_breakpoint_state($evalPayload);
+                    continue 2;
+                }
+            }
+
             $startTime = microtime(true);
 
             try {
                 $previousTimeLimit = ini_get('max_execution_time');
-                set_time_limit(15); // Prevent infinite loops
+                set_time_limit(60); // Prevent infinite loops
 
                 ob_start();
                 $result = ddless_eval_in_context($expression, $rawVariables, $rawBacktrace, false);
