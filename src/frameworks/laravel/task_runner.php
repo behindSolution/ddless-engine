@@ -34,6 +34,23 @@ function ddless_task_emit(string $type, array $data): void
     @fflush(STDOUT);
 }
 
+function ddless_csv_encode_row(array $fields, string $delimiter = ','): string
+{
+    $safe = array_map(function ($v) {
+        if (is_array($v) || is_object($v)) return json_encode($v, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($v === null) return '';
+        if ($v === true) return '1';
+        if ($v === false) return '0';
+        return (string) $v;
+    }, $fields);
+    $handle = fopen('php://temp', 'r+');
+    fputcsv($handle, $safe, $delimiter);
+    rewind($handle);
+    $csv = stream_get_contents($handle);
+    fclose($handle);
+    return rtrim($csv, "\n\r");
+}
+
 function ddless_task_done(bool $ok, float $startTime, ?string $error = null): void
 {
     $data = [
@@ -574,6 +591,74 @@ class DdlessTaskRunnerCommand extends \Illuminate\Console\Command
             }
         } finally {
             fclose($handle);
+        }
+    }
+
+    public function export(string $filename, callable $callback, string $delimiter = ';'): void
+    {
+        if (!str_ends_with(strtolower($filename), '.csv')) {
+            $filename .= '.csv';
+        }
+
+        $page = 0;
+        $totalRows = 0;
+        $headersSent = false;
+        $exportId = 'exp_' . uniqid();
+
+        ddless_task_emit('export_begin', [
+            'exportId' => $exportId,
+            'filename' => $filename,
+        ]);
+
+        try {
+            while (true) {
+                $rows = $callback($page);
+
+                if ($rows === null || $rows === [] || $rows === false) {
+                    break;
+                }
+
+                if (!is_array($rows)) {
+                    throw new \RuntimeException('Export callback must return an array of rows, null, or an empty array.');
+                }
+
+                $csvLines = [];
+
+                if (!$headersSent) {
+                    $firstRow = reset($rows);
+                    if (is_array($firstRow) || is_object($firstRow)) {
+                        $headers = array_keys((array) $firstRow);
+                        $csvLines[] = ddless_csv_encode_row($headers, $delimiter);
+                    }
+                    $headersSent = true;
+                }
+
+                foreach ($rows as $row) {
+                    $csvLines[] = ddless_csv_encode_row(array_values((array) $row), $delimiter);
+                    $totalRows++;
+                }
+
+                ddless_task_emit('export_chunk', [
+                    'exportId' => $exportId,
+                    'csv' => implode("\n", $csvLines) . "\n",
+                    'totalRows' => $totalRows,
+                ]);
+
+                $page++;
+            }
+
+            ddless_task_emit('export_end', [
+                'exportId' => $exportId,
+                'filename' => $filename,
+                'totalRows' => $totalRows,
+            ]);
+        } catch (\Throwable $e) {
+            ddless_task_emit('export_error', [
+                'exportId' => $exportId,
+                'error' => $e->getMessage(),
+                'totalRows' => $totalRows,
+            ]);
+            throw $e;
         }
     }
 
