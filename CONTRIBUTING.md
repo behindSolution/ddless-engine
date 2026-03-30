@@ -13,7 +13,7 @@ php tests/run-all.php   # make sure everything passes first
 
 ## PHP compatibility
 
-All code must run on PHP 7.4 through 8.4. That means no:
+All code must run on PHP 7.4+. That means no:
 
 - `mixed` type hints (use `#[\ReturnTypeWillChange]` where needed)
 - named arguments, `match`, union types, `readonly`, enums, fibers

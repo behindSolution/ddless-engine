@@ -40,7 +40,7 @@ src/
 
 ## Requirements
 
-- PHP 7.4+ (tested up to 8.4)
+- PHP 7.4+ (tested up to 8.5)
 - `json` extension (ships with PHP by default)
 - No external dependencies
 
@@ -58,7 +58,7 @@ php tests/InstrumentCodeAstTest.php
 php tests/HttpRequestTest.php
 ```
 
-CI runs against PHP 7.4, 8.0, 8.1, 8.2, 8.3, and 8.4 on every push and PR.
+CI runs against PHP 7.4+ on every push and PR.
 
 ## License
 
