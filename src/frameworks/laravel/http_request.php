@@ -655,6 +655,7 @@ try {
             echo $capturedBodyContent;
         }
     } else {
+        $response->headers->remove('Content-Length');
         $response->send();
         if (is_string($responseBodyContent)) {
             $capturedBodyContent = $responseBodyContent;

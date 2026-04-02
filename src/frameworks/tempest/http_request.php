@@ -675,6 +675,7 @@ try {
         if (is_object($response) && method_exists($response, 'send')) {
             ob_start();
             $response->send();
+            header_remove('Content-Length');
             $bodyOutput = ob_get_clean();
             $capturedBodyContent = is_string($bodyOutput) ? $bodyOutput : $responseBodyContent;
         } else {
