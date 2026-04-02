@@ -2818,6 +2818,16 @@ if (ddless_is_debug_mode_active()) {
             $instrumented = ddless_instrument_php_file($absolutePath);
             if ($instrumented !== null) {
                 $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$absolutePath] = $instrumented;
+                if (function_exists('opcache_invalidate')) {
+                    opcache_invalidate($absolutePath, true);
+                }
+                $realAbsPath = realpath($absolutePath);
+                if ($realAbsPath && $realAbsPath !== $absolutePath) {
+                    $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$realAbsPath] = $instrumented;
+                    if (function_exists('opcache_invalidate')) {
+                        opcache_invalidate($realAbsPath, true);
+                    }
+                }
                 ddless_log("[ddless] Instrumented (with breakpoints): {$info['relativePath']}\n");
             }
         }
