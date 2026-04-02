@@ -787,5 +787,5 @@ try {
     if ($phpWrapperReplaced) {
         @stream_wrapper_restore('php');
     }
-    fwrite(STDERR, "[ddless] PHP execution complete\n");
+    fwrite(STDERR, "__DDLESS_REQUEST_COMPLETE__\n");
 }

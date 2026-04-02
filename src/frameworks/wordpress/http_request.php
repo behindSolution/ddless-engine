@@ -497,7 +497,7 @@ if (php_sapi_name() === 'cli-server') {
         $rootSnapshotPath = $ddlessDirectory . DIRECTORY_SEPARATOR . 'last_execution.json';
         @file_put_contents($rootSnapshotPath, $encodedSnapshot);
 
-        fwrite(STDERR, "[ddless] WordPress execution complete\n");
+        fwrite(STDERR, "__DDLESS_REQUEST_COMPLETE__\n");
     });
 
     $currentHost = $_SERVER['HTTP_HOST'] ?? ('127.0.0.1' . (isset($_SERVER['SERVER_PORT']) ? ':' . $_SERVER['SERVER_PORT'] : ''));
@@ -709,7 +709,7 @@ register_shutdown_function(function () use (
     $rootSnapshotPath = $ddlessDirectory . DIRECTORY_SEPARATOR . 'last_execution.json';
     @file_put_contents($rootSnapshotPath, $encodedSnapshot);
 
-    fwrite(STDERR, "[ddless] WordPress execution complete\n");
+    fwrite(STDERR, "__DDLESS_REQUEST_COMPLETE__\n");
 });
 
 // Capture output — WordPress outputs HTML directly via wp-blog-header.php.
