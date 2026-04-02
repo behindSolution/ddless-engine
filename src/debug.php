@@ -33,6 +33,33 @@ function ddless_log(string $msg): void {
 
 ddless_log("[ddless] debug.php loaded, DEBUG_MODE=" . (getenv('DDLESS_DEBUG_MODE') ?: 'not set') . "\n");
 
+function ddless_safe_send_response($response): void {
+    if (php_sapi_name() !== 'cli-server') {
+        $response->send();
+        return;
+    }
+
+    $isBinary = $response instanceof \Symfony\Component\HttpFoundation\BinaryFileResponse;
+
+    if ($isBinary) {
+        $file = $response->getFile();
+        $content = file_get_contents($file->getPathname());
+        $response->headers->set('Content-Type', $response->headers->get('Content-Type'));
+        foreach ($response->headers->allPreserveCase() as $name => $values) {
+            if (strtolower($name) === 'content-length') continue;
+            foreach ((array) $values as $v) {
+                header("{$name}: {$v}", strtolower($name) !== 'set-cookie');
+            }
+        }
+        http_response_code($response->getStatusCode());
+        header('Content-Length: ' . strlen($content));
+        echo $content;
+    } else {
+        $response->headers->remove('Content-Length');
+        $response->send();
+    }
+}
+
 // PHP 7.4 compatibility polyfills for PHP 8.0+ string functions
 if (!function_exists('str_starts_with')) {
     function str_starts_with(string $haystack, string $needle): bool {

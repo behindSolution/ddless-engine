@@ -671,13 +671,13 @@ try {
             echo $responseBodyContent;
         }
     } else {
-        // Non-CLI: send response directly
         if (is_object($response) && method_exists($response, 'send')) {
-            ob_start();
-            $response->send();
-            header_remove('Content-Length');
-            $bodyOutput = ob_get_clean();
-            $capturedBodyContent = is_string($bodyOutput) ? $bodyOutput : $responseBodyContent;
+            if (function_exists('ddless_safe_send_response')) {
+                ddless_safe_send_response($response);
+            } else {
+                $response->send();
+            }
+            $capturedBodyContent = $responseBodyContent;
         } else {
             if (is_string($responseBodyContent)) {
                 echo $responseBodyContent;

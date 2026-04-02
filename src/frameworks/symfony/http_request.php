@@ -580,8 +580,7 @@ try {
             echo $capturedBodyContent;
         }
     } else {
-        $response->headers->remove('Content-Length');
-        $response->send();
+        ddless_safe_send_response($response);
         if (is_string($responseBodyContent)) {
             $capturedBodyContent = $responseBodyContent;
         }
