@@ -532,6 +532,18 @@ if (php_sapi_name() === 'cli-server') {
 // CLI mode (DDLess direct request): manual bootstrap, capture response, snapshot.
 // ═══════════════════════════════════════════════════════════════════════════════
 
+$breakpoints = ddless_read_breakpoints($ddlessDirectory);
+$executionStartedAt = microtime(true);
+
+// Register stream wrapper BEFORE autoload — same order as proxy mode.
+// The wrapper must be active when Composer's autoloader is set up so that
+// all subsequent include/require calls go through it.
+if (getenv('DDLESS_DEBUG_MODE') === 'true') {
+    if (function_exists('ddless_register_stream_wrapper')) {
+        ddless_register_stream_wrapper();
+    }
+}
+
 require_once $projectRoot . '/vendor/autoload.php';
 
 $bootstrapFile = $projectRoot . '/config/bootstrap.php';
@@ -544,8 +556,6 @@ if (!class_exists('App\Application')) {
     exit(1);
 }
 
-$breakpoints = ddless_read_breakpoints($ddlessDirectory);
-$executionStartedAt = microtime(true);
 $logDir = defined('LOGS') ? LOGS : $projectRoot . DIRECTORY_SEPARATOR . 'logs';
 
 $phpWrapperReplaced = false;
@@ -559,12 +569,10 @@ if (in_array('php', stream_get_wrappers(), true)) {
     }
 }
 
-if (getenv('DDLESS_DEBUG_MODE') === 'true') {
-    $debugModule = dirname(__DIR__, 2) . '/debug.php';
-    if (file_exists($debugModule)) {
-        require_once $debugModule;
-        if (function_exists('ddless_register_stream_wrapper')) {
-            ddless_register_stream_wrapper();
+if (getenv('DDLESS_DEBUG_MODE') === 'true' && !empty($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'])) {
+    foreach (array_keys($GLOBALS['__DDLESS_INSTRUMENTED_CODE__']) as $instrumentedPath) {
+        if (is_file($instrumentedPath) && str_ends_with($instrumentedPath, '.php')) {
+            include_once $instrumentedPath;
         }
     }
 }
@@ -575,6 +583,21 @@ try {
     $app = new \App\Application(defined('CONFIG') ? CONFIG : $projectRoot . '/config');
     $app->bootstrap();
     $app->pluginBootstrap();
+
+    // Server::run() always calls bootstrap() internally, which would re-load
+    // plugins (DebugKit) and crash. This subclass guards against double bootstrap.
+    $server = new class($app) extends \Cake\Http\Server {
+        private bool $__bootstrapped = false;
+        protected function bootstrap(): void {
+            if ($this->__bootstrapped) return;
+            parent::bootstrap();
+            $this->__bootstrapped = true;
+        }
+        public function skipBootstrap(): void {
+            $this->__bootstrapped = true;
+        }
+    };
+    $server->skipBootstrap();
 
     $request = \Cake\Http\ServerRequestFactory::fromGlobals();
 
@@ -612,7 +635,6 @@ try {
         }
     }
 
-    $server = new \Cake\Http\Server($app);
     $response = $server->run($request);
 
     $statusCode = $response->getStatusCode();
