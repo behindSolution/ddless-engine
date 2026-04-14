@@ -24,6 +24,7 @@ $testFiles = [
     'StepOverLogicTest.php',
     'StepInLogicTest.php',
     'StepOutLogicTest.php',
+    'WatchHistoryTest.php',
 ];
 
 foreach ($testFiles as $file) {

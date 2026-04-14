@@ -1196,6 +1196,54 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
         fflush($GLOBALS['__DDLESS_IPC_STREAM__']);
     };
 
+    $watches = $GLOBALS['__DDLESS_WATCHES__'] ?? [];
+    if (!empty($watches)) {
+        if (!isset($GLOBALS['__DDLESS_WATCH_LAST__'])) {
+            $GLOBALS['__DDLESS_WATCH_LAST__'] = [];
+        }
+        $prevLoc = $GLOBALS['__DDLESS_WATCH_PREV_LOC__'] ?? null;
+        foreach ($watches as $watchExpr) {
+            if (preg_match('/^\$(\w+)/', $watchExpr, $m)) {
+                $rootName = $m[1];
+                if ($rootName !== 'this' && !array_key_exists($rootName, $scopeVariables)) {
+                    continue;
+                }
+                if ($rootName === 'this') {
+                    $hasThis = false;
+                    foreach ($scopeBacktrace as $frame) {
+                        $fn = $frame['function'] ?? '';
+                        if (str_starts_with($fn, 'ddless_')) continue;
+                        if (isset($frame['object']) && is_object($frame['object'])) { $hasThis = true; }
+                        break;
+                    }
+                    if (!$hasThis) continue;
+                }
+            }
+            try {
+                $watchVal = ddless_eval_in_context($watchExpr, $scopeVariables, $scopeBacktrace);
+                $normalized = ddless_normalize_value($watchVal, 0);
+                $serialized = json_encode($normalized, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $isFirstCapture = !array_key_exists($watchExpr, $GLOBALS['__DDLESS_WATCH_LAST__']);
+                $lastSerialized = $GLOBALS['__DDLESS_WATCH_LAST__'][$watchExpr] ?? null;
+                if ($serialized !== $lastSerialized) {
+                    $GLOBALS['__DDLESS_WATCH_LAST__'][$watchExpr] = $serialized;
+                    $useLoc = (!$isFirstCapture && $prevLoc !== null) ? $prevLoc : ['file' => $relativePath, 'line' => $line];
+                    $historyPayload = json_encode([
+                        'expr' => $watchExpr,
+                        'value' => $normalized,
+                        'file' => $useLoc['file'],
+                        'line' => $useLoc['line'],
+                        'timestamp' => microtime(true),
+                    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_WATCH_HISTORY__:{$historyPayload}\n");
+                    fflush($GLOBALS['__DDLESS_IPC_STREAM__']);
+                }
+            } catch (\Throwable $watchErr) {
+            }
+        }
+        $GLOBALS['__DDLESS_WATCH_PREV_LOC__'] = ['file' => $relativePath, 'line' => $line];
+    }
+
     if ($dumppointExpressions !== '' && $isUserBreakpoint) {
         $expressions = array_filter(explode("\n", $dumppointExpressions), fn($e) => trim($e) !== '');
         $results = [];
@@ -1212,6 +1260,9 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
             'file' => $relativePath, 'line' => $line, 'results' => $results,
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_DUMPPOINT__:{$payload}\n");
+        if (php_sapi_name() === 'cli-server') {
+            fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_REQUEST_COMPLETE__\n");
+        }
         fflush($GLOBALS['__DDLESS_IPC_STREAM__']);
         exit(0);
     }
@@ -1242,6 +1293,9 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
             'file' => $relativePath, 'line' => $line, 'results' => $results,
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_DUMPPOINT__:{$payload}\n");
+        if (php_sapi_name() === 'cli-server') {
+            fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_REQUEST_COMPLETE__\n");
+        }
         fflush($GLOBALS['__DDLESS_IPC_STREAM__']);
         exit(0);
     }
