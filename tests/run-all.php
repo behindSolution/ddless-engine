@@ -25,6 +25,7 @@ $testFiles = [
     'StepInLogicTest.php',
     'StepOutLogicTest.php',
     'WatchHistoryTest.php',
+    'MarkerFormatTest.php',
 ];
 
 foreach ($testFiles as $file) {
