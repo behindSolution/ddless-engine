@@ -55,11 +55,27 @@ $FRAMEWORKS = [
     'symfony', 'tempest', 'wordpress', 'yii2',
 ];
 
+$frameworksBase = null;
+foreach ([DDLESS_PROJECT_ROOT . '/.ddless/frameworks', DDLESS_PROJECT_ROOT . '/src/frameworks', __DIR__ . '/../frameworks', __DIR__ . '/../src/frameworks'] as $candidate) {
+    if (is_dir($candidate)) {
+        $frameworksBase = realpath($candidate);
+        break;
+    }
+}
+if ($frameworksBase === null) {
+    fwrite(STDERR, "[TaskEmitCapTest] frameworks directory not found; skipping.\n");
+    return;
+}
+
 // Load each framework's emit function under a unique name.
 $emitFns = [];
 foreach ($FRAMEWORKS as $fw) {
+    $path = $frameworksBase . "/{$fw}/task_runner.php";
+    if (!is_file($path)) {
+        continue;
+    }
     $fn = 'test_emit_' . $fw;
-    load_framework_emit(DDLESS_PROJECT_ROOT . "/.ddless/frameworks/{$fw}/task_runner.php", $fn);
+    load_framework_emit($path, $fn);
     $emitFns[$fw] = $fn;
 }
 
