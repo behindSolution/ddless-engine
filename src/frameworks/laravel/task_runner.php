@@ -30,7 +30,18 @@ function ddless_task_emit(string $type, array $data): void
 {
     $data['type'] = $type;
     $data['timestamp'] = microtime(true);
-    echo "__DDLESS_TASK_OUTPUT__:" . json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
+    $encoded = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($encoded === false || strlen($encoded) > 262144) {
+        $reason = $encoded === false
+            ? 'serialization failed (likely circular reference or unserializable value)'
+            : 'payload exceeded 256 KB (' . strlen($encoded) . ' bytes)';
+        $encoded = json_encode([
+            'type' => 'alert',
+            'timestamp' => $data['timestamp'],
+            'message' => '[' . strtoupper($type) . '] output truncated — ' . $reason . '. Pass only the fields you need (e.g. $model->only([...])).',
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+    echo "__DDLESS_TASK_OUTPUT__:" . $encoded . "\n";
     @fflush(STDOUT);
 }
 

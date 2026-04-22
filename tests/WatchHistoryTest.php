@@ -221,4 +221,6 @@ test('does not emit anything when __DDLESS_WATCHES__ is empty', function () {
 
 // ============================================================================
 
-exit(print_test_results());
+if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
+    exit(print_test_results());
+}
