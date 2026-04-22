@@ -24,7 +24,11 @@ test('array values are recursively normalized', function () {
 test('long strings are truncated at 10000 chars', function () {
     $long = str_repeat('x', 15000);
     $result = ddless_normalize_value($long);
-    assert_eq(10001, mb_strlen($result), 'truncated to 10000 + ellipsis');
+    if (function_exists('mb_strlen')) {
+        assert_eq(10001, mb_strlen($result), 'truncated to 10000 chars + 1-char ellipsis');
+    } else {
+        assert_eq(10003, strlen($result), 'truncated to 10000 bytes + 3-byte UTF-8 ellipsis');
+    }
 });
 
 test('max depth returns placeholder for objects', function () {

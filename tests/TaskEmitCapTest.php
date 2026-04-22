@@ -1,7 +1,7 @@
 <?php
 /**
  * Contract tests for ddless_task_emit size cap across every framework task runner.
- * Any payload whose JSON encoding exceeds 256 KB (or fails) must be replaced
+ * Any payload whose JSON encoding exceeds 5 MB (or fails) must be replaced
  * with an `alert` marker so the Electron renderer does not crash.
  *
  * Run: php tests/php/TaskEmitCapTest.php
@@ -82,32 +82,39 @@ foreach ($emitFns as $fw => $fn) {
 section('Task emit cap: oversized payloads become alerts');
 
 foreach ($emitFns as $fw => $fn) {
-    test("{$fw}: 500 KB payload is replaced with alert", function () use ($fn) {
-        $big = str_repeat('x', 500 * 1024);
+    test("{$fw}: 8 MB payload is replaced with alert", function () use ($fn) {
+        $big = str_repeat('x', 8 * 1024 * 1024);
         $payload = capture_emitted_marker(function () use ($fn, $big) {
             $fn('json', ['data' => $big]);
         });
         assert_eq('alert', $payload['type'], 'oversized payload must convert to alert');
         assert_array_has_key('message', $payload, 'alert must carry message');
         assert_contains($payload['message'], '[JSON]', 'alert mentions original type');
-        assert_contains($payload['message'], '256 KB', 'alert mentions the threshold');
+        assert_contains($payload['message'], '5 MB', 'alert mentions the threshold');
     });
 }
 
 section('Task emit cap: exactly-at-threshold payloads pass, just-over are capped');
 
 foreach ($emitFns as $fw => $fn) {
-    test("{$fw}: payload slightly under 256 KB is not capped", function () use ($fn) {
-        // Leave plenty of room for the envelope overhead (type, timestamp, keys).
-        $underLimit = str_repeat('y', 260000);
+    test("{$fw}: payload of 1 MB passes through (typical legitimate use)", function () use ($fn) {
+        $realistic = str_repeat('y', 1024 * 1024);
+        $payload = capture_emitted_marker(function () use ($fn, $realistic) {
+            $fn('json', ['data' => $realistic]);
+        });
+        assert_eq('json', $payload['type'], '1 MB payload must pass — common case of 20 eloquent objects');
+    });
+
+    test("{$fw}: payload of 4 MB (under 5 MB limit) is not capped", function () use ($fn) {
+        $underLimit = str_repeat('y', 4 * 1024 * 1024);
         $payload = capture_emitted_marker(function () use ($fn, $underLimit) {
             $fn('json', ['data' => $underLimit]);
         });
         assert_eq('json', $payload['type'], 'under-limit payload must not be capped');
     });
 
-    test("{$fw}: payload comfortably over 256 KB is capped", function () use ($fn) {
-        $overLimit = str_repeat('z', 300 * 1024);
+    test("{$fw}: payload of 6 MB (over 5 MB limit) is capped", function () use ($fn) {
+        $overLimit = str_repeat('z', 6 * 1024 * 1024);
         $payload = capture_emitted_marker(function () use ($fn, $overLimit) {
             $fn('json', ['data' => $overLimit]);
         });
