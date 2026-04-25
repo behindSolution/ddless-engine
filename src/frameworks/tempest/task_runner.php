@@ -115,29 +115,57 @@ function ddless_prompt_with_rule(string $promptType, string $message, array $ext
     }
 }
 
-class DdlessChart {
+class DdlessChart
+{
     private string $chartType = 'line';
-    private string $chartTitle = '';
     private array $labels = [];
     private array $datasets = [];
 
-    public function title(string $title): self { $this->chartTitle = $title; return $this; }
-    public function type(string $type): self { $this->chartType = $type; return $this; }
-    public function line(): self { $this->chartType = 'line'; return $this; }
-    public function bar(): self { $this->chartType = 'bar'; return $this; }
-    public function pie(): self { $this->chartType = 'pie'; return $this; }
-    public function doughnut(): self { $this->chartType = 'doughnut'; return $this; }
-    public function area(): self { $this->chartType = 'area'; return $this; }
+    public function line(): self
+    {
+        $this->chartType = 'line';
+        return $this;
+    }
 
-    public function labels(array $labels): self { $this->labels = $labels; return $this; }
-    public function dataset(string $label, array $data): self {
+    public function bar(): self
+    {
+        $this->chartType = 'bar';
+        return $this;
+    }
+
+    public function pie(): self
+    {
+        $this->chartType = 'pie';
+        return $this;
+    }
+
+    public function doughnut(): self
+    {
+        $this->chartType = 'doughnut';
+        return $this;
+    }
+
+    public function area(): self
+    {
+        $this->chartType = 'area';
+        return $this;
+    }
+
+    public function labels(array $labels): self
+    {
+        $this->labels = $labels;
+        return $this;
+    }
+
+    public function dataset(string $label, array $data): self
+    {
         $this->datasets[] = ['label' => $label, 'data' => $data];
         return $this;
     }
 
-    public function render(): void {
+    public function render(): void
+    {
         ddless_task_emit('chart', [
-            'title' => $this->chartTitle,
             'chartType' => $this->chartType,
             'labels' => $this->labels,
             'datasets' => $this->datasets,
