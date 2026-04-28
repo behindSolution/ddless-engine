@@ -1223,11 +1223,10 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
                 $watchVal = ddless_eval_in_context($watchExpr, $scopeVariables, $scopeBacktrace);
                 $normalized = ddless_normalize_value($watchVal, 0);
                 $serialized = json_encode($normalized, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                $isFirstCapture = !array_key_exists($watchExpr, $GLOBALS['__DDLESS_WATCH_LAST__']);
                 $lastSerialized = $GLOBALS['__DDLESS_WATCH_LAST__'][$watchExpr] ?? null;
                 if ($serialized !== $lastSerialized) {
                     $GLOBALS['__DDLESS_WATCH_LAST__'][$watchExpr] = $serialized;
-                    $useLoc = (!$isFirstCapture && $prevLoc !== null) ? $prevLoc : ['file' => $relativePath, 'line' => $line];
+                    $useLoc = $prevLoc ?? ['file' => $relativePath, 'line' => $line];
                     $historyPayload = json_encode([
                         'expr' => $watchExpr,
                         'value' => $normalized,
