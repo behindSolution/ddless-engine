@@ -31,13 +31,15 @@ test('long strings are truncated at 10000 chars', function () {
     }
 });
 
-test('max depth returns placeholder for objects', function () {
+test('max depth returns lazy marker for objects', function () {
     $obj = new \stdClass();
     $obj->name = 'test';
     $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] = 0;
+    ddless_lazy_reset();
     $result = ddless_normalize_value($obj, 1);
     $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] = 4;
-    assert_eq('[object stdClass]', $result);
+    assert_true(is_array($result) && !empty($result['__ddless_lazy__']), 'past-depth object becomes lazy marker');
+    assert_eq('stdClass', $result['class']);
 });
 
 test('max depth returns [max-depth] for arrays', function () {
@@ -65,20 +67,27 @@ test('JsonSerializable objects use jsonSerialize()', function () {
     assert_eq(['serialized' => true], $result);
 });
 
-test('objects with toArray() use that method', function () {
+test('objects with toArray() but no Arrayable/JsonSerializable fall through to lazy marker', function () {
+    // toArray() alone is too unreliable across frameworks (Symfony/Laravel Request
+    // both have toArray() with very different meanings). Classes that want to be
+    // auto-serialized must implement JsonSerializable or Arrayable explicitly.
+    ddless_lazy_reset();
     $obj = new class {
+        public string $shown = 'hi';
         public function toArray(): array {
             return ['converted' => true];
         }
     };
     $result = ddless_normalize_value($obj);
-    assert_eq(['converted' => true], $result);
+    assert_true(is_array($result) && !empty($result['__ddless_lazy__']), 'becomes lazy marker, not toArray output');
 });
 
-test('plain objects return [object ClassName]', function () {
+test('plain objects without serialization hooks become lazy markers', function () {
+    ddless_lazy_reset();
     $obj = new \stdClass();
     $result = ddless_normalize_value($obj);
-    assert_eq('[object stdClass]', $result);
+    assert_true(is_array($result) && !empty($result['__ddless_lazy__']));
+    assert_eq('stdClass', $result['class']);
 });
 
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {

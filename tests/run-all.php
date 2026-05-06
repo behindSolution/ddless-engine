@@ -27,6 +27,7 @@ $testFiles = [
     'WatchHistoryTest.php',
     'MarkerFormatTest.php',
     'TaskEmitCapTest.php',
+    'LazyExpandTest.php',
 ];
 
 foreach ($testFiles as $file) {
