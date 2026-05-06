@@ -212,6 +212,14 @@ $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] = 4; // Default serialize depth for varia
 $GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__'] = false; // Experimental: instrument code outside function bodies
 $GLOBALS['__DDLESS_BREAKPOINT_TIMEOUT__'] = 3600; // Default: 60 minutes (in seconds)
 
+// Lazy expand: emit clickable markers for objects past the depth ceiling
+// instead of "[object Foo]" so the frontend can request deeper levels on demand.
+$GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = true;
+$GLOBALS['__DDLESS_LAZY_REGISTRY__'] = [];
+$GLOBALS['__DDLESS_LAZY_BY_OID__'] = [];
+$GLOBALS['__DDLESS_LAZY_TOKEN_COUNTER__'] = 0;
+$GLOBALS['__DDLESS_LAZY_REGISTRY_LIMIT__'] = 5000;
+
 $GLOBALS['__DDLESS_MODIFIED_VARS__'] = null; // Playground: modified variables to extract back into scope
 
 $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null;
@@ -1444,13 +1452,161 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
 
 // Normalize value for JSON serialization
 // Guard: http_request.php may define this first (loaded before debug.php in playground)
+if (!function_exists('ddless_lazy_reset')) {
+    function ddless_lazy_reset(): void
+    {
+        $GLOBALS['__DDLESS_LAZY_REGISTRY__'] = [];
+        $GLOBALS['__DDLESS_LAZY_BY_OID__'] = [];
+        $GLOBALS['__DDLESS_LAZY_TOKEN_COUNTER__'] = 0;
+    }
+}
+
+if (!function_exists('ddless_lazy_register')) {
+    function ddless_lazy_register(object $obj): array
+    {
+        $oid = spl_object_id($obj);
+        if (isset($GLOBALS['__DDLESS_LAZY_BY_OID__'][$oid])) {
+            return [
+                '__ddless_lazy__' => true,
+                'class' => get_class($obj),
+                'token' => $GLOBALS['__DDLESS_LAZY_BY_OID__'][$oid],
+            ];
+        }
+
+        $limit = $GLOBALS['__DDLESS_LAZY_REGISTRY_LIMIT__'] ?? 5000;
+        if (count($GLOBALS['__DDLESS_LAZY_REGISTRY__']) >= $limit) {
+            return [
+                '__ddless_lazy__' => true,
+                'class' => get_class($obj),
+                'token' => null,
+                'reason' => 'registry_full',
+            ];
+        }
+
+        $GLOBALS['__DDLESS_LAZY_TOKEN_COUNTER__']++;
+        $token = 'lz_' . $GLOBALS['__DDLESS_LAZY_TOKEN_COUNTER__'];
+        $GLOBALS['__DDLESS_LAZY_REGISTRY__'][$token] = $obj;
+        $GLOBALS['__DDLESS_LAZY_BY_OID__'][$oid] = $token;
+
+        return [
+            '__ddless_lazy__' => true,
+            'class' => get_class($obj),
+            'token' => $token,
+        ];
+    }
+}
+
+if (!function_exists('ddless_lazy_object_placeholder')) {
+    /**
+     * Returns either a lazy marker (when feature enabled) or the legacy
+     * "[object Foo]" string. Single seam used everywhere normalize_value
+     * gives up on a deep object.
+     */
+    function ddless_lazy_object_placeholder(object $obj)
+    {
+        if (!empty($GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'])) {
+            return ddless_lazy_register($obj);
+        }
+        return '[object ' . get_class($obj) . ']';
+    }
+}
+
+if (!function_exists('ddless_lazy_expand')) {
+    /**
+     * Expand a registered object one level via reflection. Does NOT call
+     * methods (no getter side-effects, no Doctrine lazy-load triggered).
+     * Nested object values become lazy markers themselves so the frontend
+     * can request the next level on demand.
+     */
+    function ddless_lazy_expand(string $token): array
+    {
+        $obj = $GLOBALS['__DDLESS_LAZY_REGISTRY__'][$token] ?? null;
+        if (!is_object($obj)) {
+            return ['error' => 'token_not_found', 'token' => $token];
+        }
+
+        $class = get_class($obj);
+
+        // Doctrine proxy: expanding would trigger the lazy SQL load.
+        // Surface the state honestly and let the user choose to force-load.
+        if (interface_exists('Doctrine\\Persistence\\Proxy') && $obj instanceof \Doctrine\Persistence\Proxy) {
+            $initialized = method_exists($obj, '__isInitialized') ? (bool)$obj->__isInitialized() : true;
+            if (!$initialized) {
+                return [
+                    'class' => $class,
+                    'children' => [],
+                    'doctrineProxyUninitialized' => true,
+                ];
+            }
+        }
+
+        if ($obj instanceof \Generator) {
+            return ['class' => 'Generator', 'children' => [], 'note' => 'generator state opaque'];
+        }
+
+        if ($obj instanceof \Closure) {
+            try {
+                $rfn = new \ReflectionFunction($obj);
+                $params = [];
+                foreach ($rfn->getParameters() as $p) {
+                    $params[] = $p->getName();
+                }
+                return [
+                    'class' => 'Closure',
+                    'children' => [
+                        'file' => ['visibility' => 'meta', 'value' => $rfn->getFileName() ?: null],
+                        'line' => ['visibility' => 'meta', 'value' => $rfn->getStartLine() ?: null],
+                        'parameters' => ['visibility' => 'meta', 'value' => $params],
+                    ],
+                ];
+            } catch (\Throwable $e) {
+                return ['class' => 'Closure', 'children' => [], 'error' => $e->getMessage()];
+            }
+        }
+
+        try {
+            $reflection = new \ReflectionObject($obj);
+        } catch (\Throwable $e) {
+            return ['class' => $class, 'children' => [], 'error' => $e->getMessage()];
+        }
+
+        $children = [];
+        foreach ($reflection->getProperties() as $prop) {
+            if ($prop->isStatic()) {
+                continue;
+            }
+            $name = $prop->getName();
+            $vis = $prop->isPublic() ? 'public' : ($prop->isProtected() ? 'protected' : 'private');
+            try {
+                $prop->setAccessible(true);
+                if (!$prop->isInitialized($obj)) {
+                    $children[$name] = ['visibility' => $vis, 'value' => '[uninitialized]'];
+                    continue;
+                }
+                $value = $prop->getValue($obj);
+                $children[$name] = [
+                    'visibility' => $vis,
+                    'value' => ddless_normalize_value($value, 0),
+                ];
+            } catch (\Throwable $e) {
+                $children[$name] = ['visibility' => $vis, 'error' => $e->getMessage()];
+            }
+        }
+
+        return [
+            'class' => $class,
+            'children' => $children,
+        ];
+    }
+}
+
 if (!function_exists('ddless_normalize_value')) {
     function ddless_normalize_value($value, int $depth = 0)
     {
         $maxDepth = $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] ?? 4;
         if ($depth > $maxDepth) {
             if (is_object($value)) {
-                return '[object ' . get_class($value) . ']';
+                return ddless_lazy_object_placeholder($value);
             }
             return is_scalar($value) ? $value : '[max-depth]';
         }
@@ -1485,7 +1641,7 @@ if (!function_exists('ddless_normalize_value')) {
             try {
                 return ddless_normalize_value($value->jsonSerialize(), $depth + 1);
             } catch (\Throwable $exception) {
-                return '[object ' . get_class($value) . ']';
+                return ddless_lazy_object_placeholder($value);
             }
         }
 
@@ -1493,24 +1649,23 @@ if (!function_exists('ddless_normalize_value')) {
             try {
                 return ddless_normalize_value($value->toArray(), $depth + 1);
             } catch (\Throwable $exception) {
-                return '[object ' . get_class($value) . ']';
+                return ddless_lazy_object_placeholder($value);
             }
         }
 
-        if (method_exists($value, 'toArray')) {
-            try {
-                return ddless_normalize_value($value->toArray(), $depth + 1);
-            } catch (\Throwable $exception) {
-                // ignore fallthrough
-            }
-        }
+        // toArray() is intentionally not duck-typed — its semantics vary by
+        // framework (e.g. Symfony Request::toArray() decodes the JSON body,
+        // Laravel Request::toArray() returns input merged). Classes that
+        // genuinely want to be auto-serialized should implement JsonSerializable
+        // or Arrayable above. Everything else surfaces real state via the
+        // lazy-expand reflection path below.
 
         if ($value instanceof \DateTimeInterface) {
             return $value->format(\DateTimeInterface::ATOM);
         }
 
         if (is_object($value)) {
-            return '[object ' . get_class($value) . ']';
+            return ddless_lazy_object_placeholder($value);
         }
 
         if (is_resource($value)) {
@@ -1942,6 +2097,10 @@ function ddless_handle_breakpoint(
 
     ddless_log("[ddless] BREAKPOINT HIT: {$relativePath}:{$line}\n");
 
+    if (function_exists('ddless_lazy_reset')) {
+        ddless_lazy_reset();
+    }
+
     // This ensures PHP and Electron use the same session directory
     if ($GLOBALS['__DDLESS_SESSION_ID__'] === null) {
         $envSessionId = getenv('DDLESS_DEBUG_SESSION');
@@ -2204,6 +2363,23 @@ function ddless_handle_breakpoint(
 
             ddless_write_breakpoint_state($evalPayload);
             ddless_log("[ddless] Evaluate result written, waiting for next command...\n");
+            continue;
+        }
+
+        if ($command === 'expand') {
+            $token = (string)($responseData['token'] ?? '');
+            $requestId = $responseData['requestId'] ?? '';
+            $expanded = ddless_lazy_expand($token);
+
+            $expandPayload = [
+                'type' => 'expand_result',
+                'sessionId' => $sessionId,
+                'requestId' => $requestId,
+                'token' => $token,
+                'result' => $expanded,
+            ];
+            ddless_write_breakpoint_state($expandPayload);
+            ddless_log("[ddless] Expand result written for token {$token}, waiting for next command...\n");
             continue;
         }
 
