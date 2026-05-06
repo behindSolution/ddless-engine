@@ -239,6 +239,75 @@ test('Doctrine initialized proxy expands normally', function () {
     });
 });
 
+section('Eager expand mode (used by dumppoint)');
+
+class EagerNested
+{
+    public string $deep = 'inside';
+}
+
+class EagerOuter
+{
+    public int $id = 7;
+    public string $name = 'agreement';
+    private $nested;
+
+    public function __construct()
+    {
+        $this->nested = new EagerNested();
+    }
+}
+
+test('eager mode dumps one level inline with __class header', function () {
+    $previousLazy = $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] ?? false;
+    $previousEager = $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] ?? false;
+    $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = false;
+    $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = true;
+    try {
+        $result = ddless_normalize_value(new EagerOuter());
+        assert_true(is_array($result), 'eager expand returns array');
+        assert_eq('EagerOuter', $result['__class']);
+        assert_eq(7, $result['id']);
+        assert_eq('agreement', $result['name']);
+        assert_eq('[object EagerNested]', $result['nested'], 'nested object falls back to legacy string');
+    } finally {
+        $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = $previousLazy;
+        $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = $previousEager;
+    }
+});
+
+test('eager mode is bypassed when lazy is on (lazy wins)', function () {
+    $previousEager = $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] ?? false;
+    $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = true;
+    ddless_lazy_reset();
+    try {
+        $result = ddless_normalize_value(new EagerOuter());
+        assert_true(is_array($result) && !empty($result['__ddless_lazy__']), 'lazy wins over eager when both on');
+    } finally {
+        $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = $previousEager;
+    }
+});
+
+test('eager mode protects against cycles', function () {
+    $a = new EagerOuter();
+    $rfn = new \ReflectionProperty(EagerOuter::class, 'nested');
+    $rfn->setAccessible(true);
+    $rfn->setValue($a, $a);
+
+    $previousLazy = $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] ?? false;
+    $previousEager = $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] ?? false;
+    $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = false;
+    $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = true;
+    try {
+        $result = ddless_normalize_value($a);
+        assert_eq('EagerOuter', $result['__class']);
+        assert_eq('[object EagerOuter]', $result['nested'], 'self-reference falls back to legacy string');
+    } finally {
+        $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = $previousLazy;
+        $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = $previousEager;
+    }
+});
+
 section('Lazy expand: classes with toArray() but no explicit serialization contract');
 
 class FakeFrameworkRequest

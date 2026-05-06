@@ -215,6 +215,7 @@ $GLOBALS['__DDLESS_BREAKPOINT_TIMEOUT__'] = 3600; // Default: 60 minutes (in sec
 // Lazy expand: emit clickable markers for objects past the depth ceiling
 // instead of "[object Foo]" so the frontend can request deeper levels on demand.
 $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = true;
+$GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = false;
 $GLOBALS['__DDLESS_LAZY_REGISTRY__'] = [];
 $GLOBALS['__DDLESS_LAZY_BY_OID__'] = [];
 $GLOBALS['__DDLESS_LAZY_TOKEN_COUNTER__'] = 0;
@@ -1254,14 +1255,23 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
     if ($dumppointExpressions !== '' && $isUserBreakpoint) {
         $expressions = array_filter(explode("\n", $dumppointExpressions), fn($e) => trim($e) !== '');
         $results = [];
-        foreach ($expressions as $expr) {
-            $expr = trim($expr);
-            try {
-                $value = ddless_eval_in_context($expr, $scopeVariables, $scopeBacktrace);
-                $results[] = ['expr' => $expr, 'value' => ddless_normalize_value($value, 0)];
-            } catch (\Throwable $e) {
-                $results[] = ['expr' => $expr, 'value' => null, 'error' => $e->getMessage()];
+        $previousLazy = $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] ?? false;
+        $previousEager = $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] ?? false;
+        $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = false;
+        $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = true;
+        try {
+            foreach ($expressions as $expr) {
+                $expr = trim($expr);
+                try {
+                    $value = ddless_eval_in_context($expr, $scopeVariables, $scopeBacktrace);
+                    $results[] = ['expr' => $expr, 'value' => ddless_normalize_value($value, 0)];
+                } catch (\Throwable $e) {
+                    $results[] = ['expr' => $expr, 'value' => null, 'error' => $e->getMessage()];
+                }
             }
+        } finally {
+            $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = $previousLazy;
+            $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = $previousEager;
         }
         $payload = json_encode([
             'file' => $relativePath, 'line' => $line, 'results' => $results,
@@ -1287,14 +1297,23 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
         // Condition is true — evaluate dump expressions (identical to regular dumppoint)
         $expressions = array_filter(explode("\n", $condDumpExpressions), fn($e) => trim($e) !== '');
         $results = [];
-        foreach ($expressions as $expr) {
-            $expr = trim($expr);
-            try {
-                $value = ddless_eval_in_context($expr, $scopeVariables, $scopeBacktrace);
-                $results[] = ['expr' => $expr, 'value' => ddless_normalize_value($value, 0)];
-            } catch (\Throwable $e) {
-                $results[] = ['expr' => $expr, 'value' => null, 'error' => $e->getMessage()];
+        $previousLazy = $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] ?? false;
+        $previousEager = $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] ?? false;
+        $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = false;
+        $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = true;
+        try {
+            foreach ($expressions as $expr) {
+                $expr = trim($expr);
+                try {
+                    $value = ddless_eval_in_context($expr, $scopeVariables, $scopeBacktrace);
+                    $results[] = ['expr' => $expr, 'value' => ddless_normalize_value($value, 0)];
+                } catch (\Throwable $e) {
+                    $results[] = ['expr' => $expr, 'value' => null, 'error' => $e->getMessage()];
+                }
             }
+        } finally {
+            $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = $previousLazy;
+            $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = $previousEager;
         }
         $payload = json_encode([
             'file' => $relativePath, 'line' => $line, 'results' => $results,
@@ -1496,16 +1515,77 @@ if (!function_exists('ddless_lazy_register')) {
     }
 }
 
+if (!function_exists('ddless_eager_expand')) {
+    /**
+     * Reflection-based one-level expansion for callers that can't lazy-load
+     * (dumppoint exits the process right after emitting). Children that are
+     * themselves objects fall through to the legacy "[object Foo]" string
+     * so we don't recurse forever or thrash on cycles.
+     */
+    function ddless_eager_expand(object $obj): array
+    {
+        static $seen = [];
+        $oid = spl_object_id($obj);
+        if (isset($seen[$oid])) {
+            return ['__class' => get_class($obj), '__cycle__' => true];
+        }
+
+        if (interface_exists('Doctrine\\Persistence\\Proxy') && $obj instanceof \Doctrine\Persistence\Proxy) {
+            $initialized = method_exists($obj, '__isInitialized') ? (bool)$obj->__isInitialized() : true;
+            if (!$initialized) {
+                return ['__class' => get_class($obj), '__doctrine_proxy__' => 'uninitialized'];
+            }
+        }
+        if ($obj instanceof \Generator) {
+            return ['__class' => 'Generator'];
+        }
+        if ($obj instanceof \Closure) {
+            return ['__class' => 'Closure'];
+        }
+
+        $seen[$oid] = true;
+        $previousEager = $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] ?? false;
+        $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = false;
+        try {
+            $reflection = new \ReflectionObject($obj);
+            $result = ['__class' => get_class($obj)];
+            foreach ($reflection->getProperties() as $prop) {
+                if ($prop->isStatic()) continue;
+                $name = $prop->getName();
+                try {
+                    $prop->setAccessible(true);
+                    if (!$prop->isInitialized($obj)) {
+                        $result[$name] = '[uninitialized]';
+                        continue;
+                    }
+                    $result[$name] = ddless_normalize_value($prop->getValue($obj), 0);
+                } catch (\Throwable $e) {
+                    $result[$name] = '[error: ' . $e->getMessage() . ']';
+                }
+            }
+            return $result;
+        } finally {
+            $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = $previousEager;
+            unset($seen[$oid]);
+        }
+    }
+}
+
 if (!function_exists('ddless_lazy_object_placeholder')) {
     /**
-     * Returns either a lazy marker (when feature enabled) or the legacy
-     * "[object Foo]" string. Single seam used everywhere normalize_value
-     * gives up on a deep object.
+     * Three modes for objects without explicit serialization contracts:
+     *   - lazy (default): emit a clickable marker; renderer requests expand on demand.
+     *   - eager: dump one level inline via reflection — used when the caller
+     *     can't follow up async (e.g. dumppoint exits the process).
+     *   - legacy: "[object ClassName]" string. Last resort when both are off.
      */
     function ddless_lazy_object_placeholder(object $obj)
     {
         if (!empty($GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'])) {
             return ddless_lazy_register($obj);
+        }
+        if (!empty($GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'])) {
+            return ddless_eager_expand($obj);
         }
         return '[object ' . get_class($obj) . ']';
     }
