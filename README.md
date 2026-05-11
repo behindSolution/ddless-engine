@@ -14,7 +14,7 @@ Supports breakpoints (conditional, logpoints, dumppoints), step-in/over/out, wat
 
 ## Frameworks
 
-Laravel · Symfony · CodeIgniter 4 · Tempest · WordPress · vanilla PHP
+CakePHP · CodeIgniter 4 · Drupal · Laravel · Vanilla PHP · Symfony · Tempest · WordPress · Yii2
 
 ## Project layout
 
@@ -27,12 +27,15 @@ src/
 ├── task_trigger.php         Entry point for task/command debugging
 ├── ssh_proxy_router.php     SSH remote debugging support
 ├── frameworks/              Framework-specific request handling and bootstrapping
-│   ├── laravel/
-│   ├── symfony/
+│   ├── cakephp/
 │   ├── codeigniter/
+│   ├── drupal/
+│   ├── laravel/
+│   ├── php/
+│   ├── symfony/
 │   ├── tempest/
 │   ├── wordpress/
-│   └── php/
+│   └── yii/
 ├── sessions/                File-based IPC (runtime ↔ desktop app)
 ├── cache/                   Pre-instrumented code cache
 └── vendor-internal/         Bundled PHP-Parser (no Composer required)
