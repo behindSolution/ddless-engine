@@ -296,6 +296,13 @@ try {
     $cleanedCode = ddless_clean_php_code($userCode);
     $evalCode = $useStatements . "\n" . $cleanedCode;
 
+    if (getenv('DDLESS_DEBUG_MODE') === 'true' && function_exists('ddless_task_instrument_eval_code')) {
+        $__ddlessDebugEval = ddless_task_instrument_eval_code($userCode);
+        if ($__ddlessDebugEval !== null) {
+            $evalCode = $__ddlessDebugEval;
+        }
+    }
+
     $closure = \Closure::bind(function () use ($evalCode) { return eval($evalCode); }, $command, DdlessDrupalTaskRunnerCommand::class);
     $closure();
     ddless_task_done(true, $taskStartTime);

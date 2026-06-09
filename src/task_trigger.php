@@ -18,6 +18,10 @@ error_reporting(E_ALL);
 // Defer stream wrapper registration to prevent issues with Laravel bootstrap
 $GLOBALS['__DDLESS_DEFER_WRAPPER__'] = true;
 
+if (getenv('DDLESS_DEBUG_MODE') === 'true') {
+    require_once __DIR__ . '/debug.php';
+}
+
 /**
  * Emit a marker line that the Electron IPC handler can parse.
  * Used before the framework runner is loaded (which defines ddless_task_emit).

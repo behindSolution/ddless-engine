@@ -1087,6 +1087,49 @@ function ddless_instrument_php_file(string $path): ?string
     return $instrumented;
 }
 
+/**
+ * Build eval-ready, instrumented code for the Task Runner scratchpad so
+ * breakpoints set on the virtual file (__taskrunner__.php) pause execution.
+ * Returns null when there are no breakpoints or instrumentation isn't possible
+ * (the caller then runs the code normally). Line numbers are preserved 1:1 with
+ * the editor — only the <?php tag is neutralized so eval() accepts the string.
+ */
+function ddless_task_instrument_eval_code(string $userCode): ?string
+{
+    $virtualRel = '__taskrunner__.php';
+    $virtualAbs = DDLESS_PROJECT_ROOT . '/' . $virtualRel;
+    $info = $GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$virtualAbs] ?? null;
+    if ($info === null || empty($info['lines'])) {
+        return null;
+    }
+
+    // The scratchpad is top-level code — instrument global scope.
+    $GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__'] = true;
+    foreach ($info['lines'] as $line) {
+        $GLOBALS['__DDLESS_USER_BP_LINES__'][$virtualAbs . ':' . $line] = true;
+    }
+
+    $instrumented = ddless_instrument_code_with_ast(
+        $userCode,
+        $virtualAbs,
+        $virtualRel,
+        $info['lines'],
+        $info['conditions'] ?? [],
+        $info['logpoints'] ?? [],
+        $info['dumppoints'] ?? [],
+        $info['conditionalDumppoints'] ?? []
+    );
+    if ($instrumented === null) {
+        return null;
+    }
+
+    // eval() runs code already in PHP mode: neutralize the open tag (keep the
+    // line so numbers still match the editor) and drop any trailing close tag.
+    $evalReady = preg_replace('/<\?php/i', '     ', $instrumented, 1);
+    $evalReady = preg_replace('/\?>\s*$/', '', $evalReady);
+    return $evalReady;
+}
+
 function ddless_get_current_function_info(array $backtrace): array
 {
     $currentFunction = null;

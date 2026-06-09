@@ -14,6 +14,7 @@ $testFiles = [
     'AnalyzeCodeAstTest.php',
     'ResolveBreakpointsTest.php',
     'InstrumentCodeAstTest.php',
+    'TaskInstrumentEvalTest.php',
     'CurrentFunctionInfoTest.php',
     'NormalizeValueTest.php',
     'InstrumentTraceTest.php',
