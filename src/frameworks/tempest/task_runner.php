@@ -555,9 +555,12 @@ try {
     $isEvalError = str_contains($e->getFile(), "eval()'d code");
 
     if ($isEvalError) {
-        ddless_task_emit('error', [
-            'message' => $e->getMessage(),
-        ]);
+        $errorData = ['message' => $e->getMessage()];
+        if (getenv('DDLESS_DEBUG_MODE') !== 'true') {
+            $prefixLines = substr_count($useStatements, "\n") + 1;
+            $errorData['line'] = max(1, $e->getLine() - $prefixLines);
+        }
+        ddless_task_emit('error', $errorData);
         ddless_task_done(false, $taskStartTime, $e->getMessage());
         exit(1);
     }
