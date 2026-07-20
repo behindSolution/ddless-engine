@@ -57,6 +57,14 @@ $GLOBALS['argc'] = count($args);
 $_SERVER['argv'] = $args;
 $_SERVER['argc'] = count($args);
 
+if (isset($input['serverVariables']) && is_array($input['serverVariables'])) {
+    foreach ($input['serverVariables'] as $key => $value) {
+        if (is_string($key) && $key !== '' && is_string($value)) {
+            $_SERVER[$key] = $value;
+        }
+    }
+}
+
 chdir($projectRoot);
 
 // Idempotent — artisan/phpunit will skip it via require_once.
