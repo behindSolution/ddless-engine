@@ -10,7 +10,10 @@ require_once __DIR__ . '/bootstrap.php';
 section('Timeframe — position identity');
 
 $tfSessionId = 'ddless-test-timeframe';
-$tfSessionDir = dirname(__DIR__, 2) . '/.ddless/sessions/' . $tfSessionId;
+$__tfPrevSession = getenv('DDLESS_DEBUG_SESSION');
+putenv("DDLESS_DEBUG_SESSION={$tfSessionId}");
+$tfSessionDir = ddless_get_session_dir();
+putenv($__tfPrevSession === false ? 'DDLESS_DEBUG_SESSION' : "DDLESS_DEBUG_SESSION={$__tfPrevSession}");
 
 // Full reset of every global the timeframe engine touches, so tests don't leak
 // into each other (or into the shared run-all process).
