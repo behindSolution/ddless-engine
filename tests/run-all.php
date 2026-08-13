@@ -29,6 +29,7 @@ $testFiles = [
     'MarkerFormatTest.php',
     'TaskEmitCapTest.php',
     'LazyExpandTest.php',
+    'TimeframeTest.php',
 ];
 
 foreach ($testFiles as $file) {

@@ -228,6 +228,42 @@ $GLOBALS['__DDLESS_STEP_OVER_FILE__'] = null;
 $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false; // Step In: stop on any next line (enters functions)
 $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null; // Step Out: stop when we return to this function
 
+// Timeframe (time travel). Opt-in — it instruments every instrumentable line
+// and serializes scope on each one, so it is deliberately heavier than a normal
+// debug run. See the TIMEFRAME section further down for the position model.
+$GLOBALS['__DDLESS_TIMEFRAME_MODE__'] = getenv('DDLESS_TIMEFRAME') === 'true';
+$GLOBALS['__DDLESS_TF_DETAIL__'] = getenv('DDLESS_TIMEFRAME_DETAIL') ?: 'normal'; // light | normal | full
+$GLOBALS['__DDLESS_TF_SEQ__'] = 0;
+$GLOBALS['__DDLESS_TF_HANDLE__'] = null;
+$GLOBALS['__DDLESS_TF_SCOPE_STACK__'] = []; // depth => ['fn' => label, 'vars' => [...]] for delta encoding
+$GLOBALS['__DDLESS_TF_FRAMES_WRITTEN__'] = 0;
+$GLOBALS['__DDLESS_TF_TRUNCATED__'] = false;
+$GLOBALS['__DDLESS_TF_MAX_FRAMES__'] = 200000; // Runaway guard (infinite loop in user code)
+$GLOBALS['__DDLESS_TF_MAX_VARS__'] = 60;
+// Optional trigger: stay idle until execution enters this file (see ddless_tf_should_record).
+$GLOBALS['__DDLESS_TF_START_FILE__'] = str_replace('\\', '/', trim((string) getenv('DDLESS_TIMEFRAME_START')));
+$GLOBALS['__DDLESS_TF_ARMED__'] = false;
+// 'from' (default) records onward from the start file; 'only' records just it.
+$GLOBALS['__DDLESS_TF_SCOPE_MODE__'] = getenv('DDLESS_TIMEFRAME_SCOPE') === 'only' ? 'only' : 'from';
+// Only when recording: the proxy loads this on every request, and a page load
+// would turn an always-on line into noise.
+if ($GLOBALS['__DDLESS_TIMEFRAME_MODE__']) {
+    ddless_log('[ddless] Timeframe: recording'
+        . ($GLOBALS['__DDLESS_TF_START_FILE__'] !== ''
+            ? ", filter={$GLOBALS['__DDLESS_TF_SCOPE_MODE__']}:{$GLOBALS['__DDLESS_TF_START_FILE__']}"
+            : ' (no filter)')
+        . ', sapi=' . php_sapi_name() . "
+");
+}
+
+// Position identity: "<file>:<line>" => hit count. Shared by the recorder and
+// the replay gate — the nth hit of a line is what makes a frame addressable.
+$GLOBALS['__DDLESS_HIT_COUNTS__'] = [];
+
+// Replay: run silently until this position, then pause there like a breakpoint.
+$GLOBALS['__DDLESS_REPLAY_TARGET__'] = null;
+$GLOBALS['__DDLESS_IS_REPLAY__'] = false;
+
 $GLOBALS['__DDLESS_TRACE_MODE__'] = getenv('DDLESS_TRACE_MODE') === 'true';
 $GLOBALS['__DDLESS_TRACE_TRIED__'] = []; // Track files we've tried to trace-instrument
 $GLOBALS['__DDLESS_TRACE_STARTS__'] = []; // Trace entry timestamps keyed by seq (for duration calculation)
@@ -829,6 +865,22 @@ function ddless_is_trace_mode_active(): bool
     return $GLOBALS['__DDLESS_TRACE_MODE__'] ?? false;
 }
 
+/**
+ * Timeframe needs a step_check on every line of project code, not just the
+ * files carrying breakpoints, or there is no timeline to scrub. A replay counts
+ * too: it must instrument exactly what the recording did, or the positions it
+ * races to would not line up.
+ *
+ * Vendor stays out. Recording a whole framework request frame by frame is both
+ * unusable in the UI and ruinous for performance, and nobody debugs by stepping
+ * through Symfony's kernel.
+ */
+function ddless_is_timeframe_active(): bool
+{
+    return !empty($GLOBALS['__DDLESS_TIMEFRAME_MODE__'])
+        || !empty($GLOBALS['__DDLESS_IS_REPLAY__']);
+}
+
 // Lightweight trace function — records function entry without capturing variables or pausing
 // Uses debug_backtrace(IGNORE_ARGS) for minimal overhead
 // Returns seq number for pairing with ddless_trace_exit()
@@ -1093,14 +1145,22 @@ function ddless_instrument_php_file(string $path): ?string
  * Returns null when there are no breakpoints or instrumentation isn't possible
  * (the caller then runs the code normally). Line numbers are preserved 1:1 with
  * the editor — only the <?php tag is neutralized so eval() accepts the string.
+ *
+ * Timeframe mode instruments even without breakpoints: the recorder needs a
+ * step_check on every instrumentable line to build a complete timeline.
  */
 function ddless_task_instrument_eval_code(string $userCode): ?string
 {
     $virtualRel = '__taskrunner__.php';
     $virtualAbs = DDLESS_PROJECT_ROOT . '/' . $virtualRel;
     $info = $GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$virtualAbs] ?? null;
-    if ($info === null || empty($info['lines'])) {
+    $timeframe = !empty($GLOBALS['__DDLESS_TIMEFRAME_MODE__']) || !empty($GLOBALS['__DDLESS_IS_REPLAY__']);
+
+    if (!$timeframe && ($info === null || empty($info['lines']))) {
         return null;
+    }
+    if ($info === null) {
+        $info = ['relativePath' => $virtualRel, 'lines' => []];
     }
 
     // The scratchpad is top-level code — instrument global scope.
@@ -1228,6 +1288,52 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
         $condition = (string) $conditionOrVars;
         $scopeVariables = $scopeVariablesOrBacktrace;
         // $scopeBacktrace already correct from arg #7
+    }
+
+    // Position identity for timeframe/replay: the nth time THIS line runs.
+    // Counted before any early return so the numbering is identical between a
+    // recording run and a replay of it.
+    $positionKey = "{$file}:{$line}";
+    $nth = ($GLOBALS['__DDLESS_HIT_COUNTS__'][$positionKey] = ($GLOBALS['__DDLESS_HIT_COUNTS__'][$positionKey] ?? 0) + 1);
+
+    // REPLAY: race to the target position. Returning here skips watches,
+    // logpoints, dumppoints (which would exit()) and every pause — the run must
+    // reach the target exactly as the recording did.
+    if ($GLOBALS['__DDLESS_REPLAY_TARGET__'] !== null) {
+        $target = $GLOBALS['__DDLESS_REPLAY_TARGET__'];
+        if ($target['line'] !== $line
+            || $target['nth'] !== $nth
+            || $target['file'] !== str_replace('\\', '/', $relativePath)
+        ) {
+            return;
+        }
+
+        $GLOBALS['__DDLESS_REPLAY_TARGET__'] = null;
+        // Mark it hit so a user breakpoint on this same line doesn't pause twice.
+        $GLOBALS['__DDLESS_HIT_USER_BPS__'][$positionKey] = true;
+        ddless_log("[ddless] Timeframe: reached replay target {$relativePath}:{$line}#{$nth}\n");
+        ddless_handle_breakpoint($file, $line, $relativePath, $scopeVariables, $scopeBacktrace);
+        return;
+    }
+
+    if (ddless_tf_should_record($relativePath)) {
+        // Which flavour of user breakpoint sits here, so the timeline can colour
+        // it like the gutter does. Same precedence the branches below follow.
+        $bpKind = null;
+        if ($isUserBreakpoint) {
+            if ($dumppointExpressions !== '') {
+                $bpKind = 'dump';
+            } elseif ($condDumpCondition !== '' && $condDumpExpressions !== '') {
+                $bpKind = 'conddump';
+            } elseif ($logpointExpression !== '') {
+                $bpKind = 'log';
+            } elseif ($condition !== '') {
+                $bpKind = 'condition';
+            } else {
+                $bpKind = 'line';
+            }
+        }
+        ddless_tf_record($line, $relativePath, $nth, $scopeVariables, $scopeBacktrace, $bpKind);
     }
 
     // Helper: evaluate watch expressions and emit without pausing
@@ -2202,6 +2308,458 @@ function ddless_extract_function_arguments(array $backtrace): array
     }
 
     return $args;
+}
+
+// ============================================================================
+// TIMEFRAME — record & replay ("time travel")
+//
+// A frame is addressed by POSITION: "<relativeFile>:<line>#<nth>", where nth is
+// the hit count of that exact line. Position beats a global step counter
+// because instrumenting one more file (step-in, on-demand) shifts every global
+// seq but never the per-line count of an unrelated line.
+//
+// RECORD: with DDLESS_TIMEFRAME=true every ddless_step_check() appends a frame
+// to sessions/<id>/timeline.ndjson. Scope is delta-encoded against the previous
+// frame of the same scope, so a loop body costs one changed variable per turn
+// instead of a full snapshot.
+//
+// REPLAY: re-run the same input with DDLESS_REPLAY_TARGET=<position>. Every
+// step_check before the target returns immediately — no watches, no logpoints,
+// no dumppoint exit(), no pause — and on arrival it becomes an ordinary
+// breakpoint pause. The Electron side needs no new pause protocol.
+// ============================================================================
+
+define('DDLESS_TIMEFRAME_VERSION', '1.1'); // v1.1: frame.bp carries the breakpoint kind
+
+/** Parse "app/Foo.php:42#3" into its parts. Returns null when malformed. */
+function ddless_tf_parse_position(string $raw): ?array
+{
+    if (!preg_match('/^(.+):(\d+)#(\d+)$/', trim($raw), $m)) {
+        return null;
+    }
+    return [
+        'file' => str_replace('\\', '/', $m[1]),
+        'line' => (int) $m[2],
+        'nth'  => (int) $m[3],
+    ];
+}
+
+function ddless_tf_format_position(string $relativePath, int $line, int $nth): string
+{
+    return str_replace('\\', '/', $relativePath) . ':' . $line . '#' . $nth;
+}
+
+/** Recording is off during a replay run — the original timeline stays authoritative. */
+function ddless_tf_is_recording(): bool
+{
+    return !empty($GLOBALS['__DDLESS_TIMEFRAME_MODE__'])
+        && empty($GLOBALS['__DDLESS_IS_REPLAY__']);
+}
+
+/**
+ * Optional file filter, in two shapes:
+ *
+ *   from  Recording stays idle until execution first enters the file, then runs
+ *         to the end, following whatever it calls. A framework request spends
+ *         most of its life in bootstrap, so starting at your controller drops
+ *         the bulk of the frames.
+ *   only  Records that file and nothing else. Calls into other files still
+ *         execute, they just are not recorded, which isolates one unit of code
+ *         instead of everything downstream of it.
+ *
+ * Either way the cheap part is what runs when a line is skipped: the counter
+ * and one string compare, instead of serializing a whole scope.
+ *
+ * Position counting is untouched: __DDLESS_HIT_COUNTS__ advances on every
+ * step_check regardless, so a replay still lands where the recording says.
+ */
+function ddless_tf_matches_start_file(string $relativePath, string $startFile): bool
+{
+    $current = str_replace('\\', '/', $relativePath);
+    // Exact relative path, or a suffix so a bare file name also works.
+    return $current === $startFile || str_ends_with($current, '/' . $startFile);
+}
+
+function ddless_tf_should_record(string $relativePath): bool
+{
+    if (!ddless_tf_is_recording()) {
+        return false;
+    }
+
+    $startFile = $GLOBALS['__DDLESS_TF_START_FILE__'] ?? '';
+    if ($startFile === '') {
+        return true;
+    }
+
+    $matches = ddless_tf_matches_start_file($relativePath, $startFile);
+
+    // 'only' never arms: each line is judged on its own file.
+    if (($GLOBALS['__DDLESS_TF_SCOPE_MODE__'] ?? 'from') === 'only') {
+        return $matches;
+    }
+
+    if (!empty($GLOBALS['__DDLESS_TF_ARMED__'])) {
+        return true;
+    }
+    if ($matches) {
+        $GLOBALS['__DDLESS_TF_ARMED__'] = true;
+        ddless_log("[ddless] Timeframe: armed at {$relativePath}
+");
+        return true;
+    }
+
+    return false;
+}
+
+
+/**
+ * Identity for this execution. Concurrent requests share a session (it is keyed
+ * by host + project), so a single timeline file meant the second request
+ * truncated the first and both timelines turned to garbage. PID plus start time
+ * is unique per run without needing anything handed in from outside, which
+ * matters because not every flow spawns PHP from Electron.
+ */
+function ddless_tf_run_id(): string
+{
+    static $runId = null;
+    if ($runId === null) {
+        $runId = getmypid() . '-' . str_pad((string) (int) round(microtime(true) * 1000), 13, '0', STR_PAD_LEFT);
+    }
+    return $runId;
+}
+
+function ddless_tf_timeline_dir(): string
+{
+    $dir = ddless_get_session_dir() . '/timeframe';
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0755, true);
+    }
+    return $dir;
+}
+
+function ddless_tf_timeline_file(): string
+{
+    return ddless_tf_timeline_dir() . '/' . ddless_tf_run_id() . '.ndjson';
+}
+
+/** Short human label so a list of runs reads like a list of things you did. */
+function ddless_tf_run_label(): string
+{
+    $method = $_SERVER['REQUEST_METHOD'] ?? null;
+    $uri = $_SERVER['REQUEST_URI'] ?? null;
+    if (is_string($method) && is_string($uri) && $uri !== '') {
+        $path = strtok($uri, '?');
+        return $method . ' ' . ($path === false ? $uri : $path);
+    }
+    if (getenv('DDLESS_TASK_RUNNER') || defined('DDLESS_TASK_RUNNER')) {
+        return 'Task Runner';
+    }
+    if (getenv('DDLESS_METHOD_EXECUTION')) {
+        return 'Method';
+    }
+    return 'CLI';
+}
+
+/**
+ * Keep the recording directory from growing without bound. Runs are named so
+ * they sort by start time, so the newest survive.
+ */
+function ddless_tf_prune_old_runs(int $keep = 20): void
+{
+    $dir = ddless_tf_timeline_dir();
+    $files = @glob($dir . '/*.ndjson');
+    if ($files === false || count($files) <= $keep) {
+        return;
+    }
+    sort($files);
+    foreach (array_slice($files, 0, count($files) - $keep) as $stale) {
+        @unlink($stale);
+    }
+}
+
+/**
+ * Open the timeline on first frame and write the meta header. Returns null (and
+ * disables recording) when the file can't be written — a broken timeline must
+ * never break the run itself.
+ */
+function ddless_tf_open()
+{
+    if ($GLOBALS['__DDLESS_TF_HANDLE__'] !== null) {
+        return $GLOBALS['__DDLESS_TF_HANDLE__'];
+    }
+
+    $path = ddless_tf_timeline_file();
+    $handle = @fopen($path, 'wb');
+    if ($handle === false) {
+        ddless_log("[ddless] Timeframe: cannot write {$path}, recording disabled\n");
+        $GLOBALS['__DDLESS_TIMEFRAME_MODE__'] = false;
+        return null;
+    }
+
+    $GLOBALS['__DDLESS_TF_HANDLE__'] = $handle;
+
+    ddless_tf_prune_old_runs();
+
+    $meta = [
+        'type' => 'meta',
+        'version' => DDLESS_TIMEFRAME_VERSION,
+        'cacheVersion' => defined('DDLESS_CACHE_VERSION') ? DDLESS_CACHE_VERSION : null,
+        'detail' => $GLOBALS['__DDLESS_TF_DETAIL__'],
+        'sessionId' => getenv('DDLESS_DEBUG_SESSION') ?: 'default',
+        'runId' => ddless_tf_run_id(),
+        'label' => ddless_tf_run_label(),
+        'startFile' => $GLOBALS['__DDLESS_TF_START_FILE__'] ?: null,
+        'scopeMode' => $GLOBALS['__DDLESS_TF_START_FILE__'] ? $GLOBALS['__DDLESS_TF_SCOPE_MODE__'] : null,
+        'startedAt' => microtime(true),
+    ];
+    fwrite($handle, json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
+
+    register_shutdown_function('ddless_tf_close');
+
+    return $handle;
+}
+
+/**
+ * Close the timeline and announce it on the IPC stream so the UI knows where
+ * the recording landed and how many frames it holds.
+ */
+function ddless_tf_close(): void
+{
+    $handle = $GLOBALS['__DDLESS_TF_HANDLE__'] ?? null;
+    if ($handle === null) {
+        return;
+    }
+
+    $summary = [
+        'runId' => ddless_tf_run_id(),
+        'frames' => $GLOBALS['__DDLESS_TF_FRAMES_WRITTEN__'],
+        'truncated' => (bool) $GLOBALS['__DDLESS_TF_TRUNCATED__'],
+    ];
+
+    @fwrite($handle, json_encode(
+        ['type' => 'end'] + $summary + ['endedAt' => microtime(true)],
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+    ) . "\n");
+    @fclose($handle);
+    $GLOBALS['__DDLESS_TF_HANDLE__'] = null;
+
+    // No stdout marker on purpose. The 'end' record above already carries the
+    // summary and the tailer reads it from the file, so emitting one would only
+    // create a line every consumer has to remember to strip: in the Task Runner
+    // it surfaces as a bogus error line, and over HTTP stdout IS the response
+    // body, so it would corrupt the response.
+}
+
+/**
+ * Serialize the scope for a recorded frame.
+ *
+ * Lazy-expand tokens are useless here — the object they point at is long gone
+ * by the time anyone scrubs the timeline — so objects are expanded inline at a
+ * shallow depth instead. 'full' detail keeps the user's configured depth.
+ */
+function ddless_tf_capture_vars(array $scopeVariables): array
+{
+    static $ignored = ['GLOBALS', '_SERVER', '_GET', '_POST', '_FILES', '_COOKIE', '_SESSION', '_REQUEST', '_ENV'];
+
+    $previousLazy = $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] ?? false;
+    $previousDepth = $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] ?? 4;
+    $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = false;
+    if (($GLOBALS['__DDLESS_TF_DETAIL__'] ?? 'normal') !== 'full') {
+        $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] = 1;
+    }
+
+    $captured = [];
+    $max = $GLOBALS['__DDLESS_TF_MAX_VARS__'] ?? 60;
+
+    try {
+        foreach ($scopeVariables as $name => $value) {
+            if (!is_string($name) || in_array($name, $ignored, true)) {
+                continue;
+            }
+            $lowerName = strtolower($name);
+            if (str_starts_with($lowerName, 'ddless_') || str_starts_with($lowerName, '__ddless')) {
+                continue;
+            }
+            $captured[$name] = ddless_normalize_value($value, 0);
+            if (count($captured) >= $max) {
+                break;
+            }
+        }
+    } catch (\Throwable $e) {
+        // A single unserializable value must not kill the recording.
+    } finally {
+        $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = $previousLazy;
+        $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] = $previousDepth;
+    }
+
+    return $captured;
+}
+
+/**
+ * Interactive input is the one thing a replay cannot re-derive: the run reaches
+ * a prompt and there is nobody on the other end, so every answer comes back
+ * empty and the whole result collapses to null.
+ *
+ * So stdin is journalled. Every line read during a recording is appended in
+ * order; a replay hands them back in that same order and never emits a prompt.
+ * Rejected answers are journalled too: the validation rule is deterministic, so
+ * replaying the full sequence reproduces the loop exactly.
+ */
+function ddless_tf_input_journal_file(): string
+{
+    return ddless_get_session_dir() . '/stdin.ndjson';
+}
+
+/** Record one line read from stdin. No-op unless a recording is in progress. */
+function ddless_tf_journal_input(string $value): void
+{
+    if (!ddless_tf_is_recording()) {
+        return;
+    }
+    @file_put_contents(
+        ddless_tf_input_journal_file(),
+        json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n",
+        FILE_APPEND | LOCK_EX
+    );
+}
+
+/**
+ * Next journalled answer during a replay, or null when not replaying or the
+ * journal is spent (the caller then falls back to a real prompt).
+ */
+function ddless_tf_next_journaled_input(): ?string
+{
+    if (empty($GLOBALS['__DDLESS_IS_REPLAY__'])) {
+        return null;
+    }
+
+    if (!isset($GLOBALS['__DDLESS_TF_INPUT_QUEUE__'])) {
+        $queue = [];
+        $raw = @file_get_contents(ddless_tf_input_journal_file());
+        if ($raw !== false) {
+            foreach (explode("\n", $raw) as $line) {
+                if (trim($line) === '') continue;
+                $decoded = json_decode($line, true);
+                if (is_string($decoded)) $queue[] = $decoded;
+            }
+        }
+        $GLOBALS['__DDLESS_TF_INPUT_QUEUE__'] = $queue;
+        ddless_log('[ddless] Timeframe: ' . count($queue) . " journalled input(s) available for replay\n");
+    }
+
+    if (empty($GLOBALS['__DDLESS_TF_INPUT_QUEUE__'])) {
+        return null;
+    }
+
+    return array_shift($GLOBALS['__DDLESS_TF_INPUT_QUEUE__']);
+}
+
+/** Append one frame to the timeline. Never throws — recording is best-effort. */
+function ddless_tf_record(
+    int $line,
+    string $relativePath,
+    int $nth,
+    array $scopeVariables,
+    array $scopeBacktrace,
+    ?string $bpKind = null
+): void {
+    if ($GLOBALS['__DDLESS_TF_FRAMES_WRITTEN__'] >= $GLOBALS['__DDLESS_TF_MAX_FRAMES__']) {
+        $GLOBALS['__DDLESS_TF_TRUNCATED__'] = true;
+        return;
+    }
+
+    $handle = ddless_tf_open();
+    if ($handle === null) {
+        return;
+    }
+
+    $context = ddless_get_current_function_info($scopeBacktrace);
+    $label = $context['function'] ?? '{main}';
+    $depth = (int) $context['depth'];
+
+    $frame = [
+        'seq' => ++$GLOBALS['__DDLESS_TF_SEQ__'],
+        'file' => $relativePath,
+        'line' => $line,
+        'nth' => $nth,
+        'fn' => $label,
+        'depth' => $depth,
+        't' => round((microtime(true) - $GLOBALS['__DDLESS_TRACE_REQUEST_START__']) * 1000, 3),
+    ];
+    // 'line' | 'condition' | 'log' | 'dump' | 'conddump' — absent when the line
+    // carries no user breakpoint.
+    if ($bpKind !== null) {
+        $frame['bp'] = $bpKind;
+    }
+
+    if (($GLOBALS['__DDLESS_TF_DETAIL__'] ?? 'normal') !== 'light') {
+        // Anything deeper than the current frame has returned — those scopes are
+        // gone, so a later call at that depth starts fresh instead of diffing
+        // against a dead scope.
+        foreach (array_keys($GLOBALS['__DDLESS_TF_SCOPE_STACK__']) as $stackDepth) {
+            if ($stackDepth > $depth) {
+                unset($GLOBALS['__DDLESS_TF_SCOPE_STACK__'][$stackDepth]);
+            }
+        }
+
+        $vars = ddless_tf_capture_vars($scopeVariables);
+        $previous = $GLOBALS['__DDLESS_TF_SCOPE_STACK__'][$depth] ?? null;
+
+        if ($previous !== null && $previous['fn'] === $label) {
+            $changed = [];
+            foreach ($vars as $name => $value) {
+                if (!array_key_exists($name, $previous['vars']) || $previous['vars'][$name] !== $value) {
+                    $changed[$name] = $value;
+                }
+            }
+            $removed = array_values(array_diff(array_keys($previous['vars']), array_keys($vars)));
+            if (!empty($changed)) {
+                $frame['vars'] = $changed;
+            }
+            if (!empty($removed)) {
+                $frame['del'] = $removed;
+            }
+        } else {
+            // New scope: full snapshot, so a reader can rebuild state from here
+            // without replaying frames from an unrelated call.
+            $frame['scopeStart'] = true;
+            if (!empty($vars)) {
+                $frame['vars'] = $vars;
+            }
+        }
+
+        $GLOBALS['__DDLESS_TF_SCOPE_STACK__'][$depth] = ['fn' => $label, 'vars' => $vars];
+    }
+
+    $json = json_encode(
+        $frame,
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR
+    );
+    if ($json === false) {
+        return;
+    }
+
+    fwrite($handle, $json . "\n");
+    $GLOBALS['__DDLESS_TF_FRAMES_WRITTEN__']++;
+
+    // The UI tails this file while the run is still going, so the buffer can't
+    // sit until shutdown. Flushing in batches keeps the live view ~current
+    // without paying an fsync per executed line.
+    if ($GLOBALS['__DDLESS_TF_FRAMES_WRITTEN__'] % 50 === 0) {
+        @fflush($handle);
+    }
+}
+
+$__ddless_replay_raw = getenv('DDLESS_REPLAY_TARGET');
+if (is_string($__ddless_replay_raw) && $__ddless_replay_raw !== '') {
+    $__ddless_replay_target = ddless_tf_parse_position($__ddless_replay_raw);
+    if ($__ddless_replay_target === null) {
+        ddless_log("[ddless] Timeframe: invalid DDLESS_REPLAY_TARGET '{$__ddless_replay_raw}', ignoring\n");
+    } else {
+        $GLOBALS['__DDLESS_REPLAY_TARGET__'] = $__ddless_replay_target;
+        $GLOBALS['__DDLESS_IS_REPLAY__'] = true;
+        ddless_log("[ddless] Timeframe: replaying to {$__ddless_replay_raw}\n");
+    }
 }
 
 $GLOBALS['__DDLESS_SESSION_ID__'] = null;
@@ -3305,7 +3863,7 @@ class DDLessSafeIncludeWrapper
                 }
             }
             
-            if (ddless_is_step_mode_active() && !ddless_is_vendor_path($path)) {
+            if ((ddless_is_step_mode_active() || ddless_is_timeframe_active()) && !ddless_is_vendor_path($path)) {
                 $realPath = self::getRealPath($path);
 
                 if (!isset($GLOBALS['__DDLESS_ONDEMAND_TRIED__'][$realPath])) {

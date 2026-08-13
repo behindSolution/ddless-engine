@@ -95,8 +95,21 @@ function ddless_prompt_with_rule(string $promptType, string $message, array $ext
             $data['validationError'] = $validationError;
         }
 
-        ddless_task_emit('prompt', $data);
-        $input = trim((string)fgets(STDIN));
+        // A replay answers from the recorded journal and stays silent: emitting
+        // a prompt nobody can answer is what made replays return null.
+        $replayed = function_exists('ddless_tf_next_journaled_input')
+            ? ddless_tf_next_journaled_input()
+            : null;
+
+        if ($replayed !== null) {
+            $input = $replayed;
+        } else {
+            ddless_task_emit('prompt', $data);
+            $input = trim((string)fgets(STDIN));
+            if (function_exists('ddless_tf_journal_input')) {
+                ddless_tf_journal_input($input);
+            }
+        }
 
         if ($rule === null) {
             return $input;
@@ -567,17 +580,17 @@ try {
 
     $cleanedCode = ddless_clean_php_code($userCode);
 
-    $evalCode = $useStatements . "\n" . $cleanedCode;
+    $__ddless_eval_code__ = $useStatements . "\n" . $cleanedCode;
 
     if (getenv('DDLESS_DEBUG_MODE') === 'true' && function_exists('ddless_task_instrument_eval_code')) {
         $__ddlessDebugEval = ddless_task_instrument_eval_code($userCode);
         if ($__ddlessDebugEval !== null) {
-            $evalCode = $__ddlessDebugEval;
+            $__ddless_eval_code__ = $__ddlessDebugEval;
         }
     }
 
-    $closure = \Closure::bind(function () use ($evalCode) {
-        return eval($evalCode);
+    $closure = \Closure::bind(function () use ($__ddless_eval_code__) {
+        return eval($__ddless_eval_code__);
     }, $task, DdlessTask::class);
 
     $closure();
