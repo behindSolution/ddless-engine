@@ -32,6 +32,7 @@ src/
 │   ├── drupal/
 │   ├── laravel/
 │   ├── php/
+│   ├── slim/
 │   ├── symfony/
 │   ├── tempest/
 │   ├── wordpress/
