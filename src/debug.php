@@ -134,18 +134,26 @@ function ddless_get_breakpoints_file(): string
     return __DIR__ . '/breakpoints.json';
 }
 
-function ddless_write_breakpoint_state(array $payload): bool
+function ddless_write_breakpoint_state(array $payload, bool $clearPendingCommand = true): bool
 {
     $stateFile = ddless_get_breakpoint_state_file();
     $commandFile = ddless_get_breakpoint_command_file();
 
-    @unlink($commandFile);
+    if ($clearPendingCommand) {
+        @unlink($commandFile);
+    }
 
     $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     if ($json === false) {
         ddless_log("[ddless] Failed to encode breakpoint state\n");
         return false;
     }
+
+    $tmpFile = $stateFile . '.tmp';
+    if (@file_put_contents($tmpFile, $json, LOCK_EX) !== false && @rename($tmpFile, $stateFile)) {
+        return true;
+    }
+    @unlink($tmpFile);
 
     $written = @file_put_contents($stateFile, $json, LOCK_EX);
     if ($written === false) {
@@ -227,6 +235,7 @@ $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null;
 $GLOBALS['__DDLESS_STEP_OVER_FILE__'] = null;
 $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false; // Step In: stop on any next line (enters functions)
 $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null; // Step Out: stop when we return to this function
+$GLOBALS['__DDLESS_STEP_OUT_DEPTH__'] = null;
 
 // Timeframe (time travel). Opt-in — it instruments every instrumentable line
 // and serializes scope on each one, so it is deliberately heavier than a normal
@@ -268,7 +277,6 @@ $GLOBALS['__DDLESS_TRACE_MODE__'] = getenv('DDLESS_TRACE_MODE') === 'true';
 $GLOBALS['__DDLESS_TRACE_TRIED__'] = []; // Track files we've tried to trace-instrument
 $GLOBALS['__DDLESS_TRACE_STARTS__'] = []; // Trace entry timestamps keyed by seq (for duration calculation)
 $GLOBALS['__DDLESS_TRACE_REQUEST_START__'] = $_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true);
-$GLOBALS['__DDLESS_LOGPOINT_DEDUP__'] = []; // Dedup: file:line:message => last emit microtime
 
 $__ddless_session_id = getenv('DDLESS_DEBUG_SESSION') ?: 'default';
 $__ddless_session_dir = __DIR__ . '/sessions/' . $__ddless_session_id;
@@ -300,8 +308,8 @@ if (is_file($__ddless_breakpoints_file)) {
                 $GLOBALS['__DDLESS_BREAKPOINT_TIMEOUT__'] = max(1, (int)$__ddless_settings['breakpointTimeout']) * 60; // Convert minutes to seconds
             }
             if (isset($__ddless_settings['memoryLimit']) && is_numeric($__ddless_settings['memoryLimit'])) {
-                $limitMb = max(256, (int)$__ddless_settings['memoryLimit']);
-                ini_set('memory_limit', ($limitMb >= 1024 ? intdiv($limitMb, 1024) . 'G' : $limitMb . 'M'));
+                $__ddless_limitMb = max(256, (int)$__ddless_settings['memoryLimit']);
+                ini_set('memory_limit', ($__ddless_limitMb >= 1024 ? intdiv($__ddless_limitMb, 1024) . 'G' : $__ddless_limitMb . 'M'));
             }
         } else {
             $__ddless_bp_map = $__ddless_raw;
@@ -310,9 +318,9 @@ if (is_file($__ddless_breakpoints_file)) {
 
         $GLOBALS['__DDLESS_WATCHES__'] = [];
         if (isset($__ddless_raw['watches']) && is_array($__ddless_raw['watches'])) {
-            foreach ($__ddless_raw['watches'] as $expr) {
-                if (is_string($expr) && $expr !== '') {
-                    $GLOBALS['__DDLESS_WATCHES__'][] = $expr;
+            foreach ($__ddless_raw['watches'] as $__ddless_expr) {
+                if (is_string($__ddless_expr) && $__ddless_expr !== '') {
+                    $GLOBALS['__DDLESS_WATCHES__'][] = $__ddless_expr;
                 }
             }
         }
@@ -320,80 +328,80 @@ if (is_file($__ddless_breakpoints_file)) {
             ddless_log("[ddless] Loaded " . count($GLOBALS['__DDLESS_WATCHES__']) . " watch expressions\n");
         }
 
-        foreach ($__ddless_bp_map as $relativePath => $lines) {
-            if (!is_array($lines)) continue;
-            $normalizedPath = str_replace('\\', '/', ltrim($relativePath, '/\\'));
-            $absolutePath = DDLESS_PROJECT_ROOT . '/' . $normalizedPath;
+        foreach ($__ddless_bp_map as $__ddless_relativePath => $__ddless_lines) {
+            if (!is_array($__ddless_lines)) continue;
+            $__ddless_normalizedPath = str_replace('\\', '/', ltrim($__ddless_relativePath, '/\\'));
+            $__ddless_absolutePath = DDLESS_PROJECT_ROOT . '/' . $__ddless_normalizedPath;
 
-            $validLines = [];
-            foreach ($lines as $line) {
-                if (is_numeric($line) && (int)$line > 0) {
-                    $validLines[] = (int)$line;
+            $__ddless_validLines = [];
+            foreach ($__ddless_lines as $__ddless_line) {
+                if (is_numeric($__ddless_line) && (int)$__ddless_line > 0) {
+                    $__ddless_validLines[] = (int)$__ddless_line;
                 }
             }
 
-            $fileConditions = [];
-            if (isset($__ddless_cond_map[$relativePath]) && is_array($__ddless_cond_map[$relativePath])) {
-                foreach ($__ddless_cond_map[$relativePath] as $condLine => $condExpr) {
-                    if (is_string($condExpr) && $condExpr !== '') {
-                        $fileConditions[(int)$condLine] = $condExpr;
+            $__ddless_fileConditions = [];
+            if (isset($__ddless_cond_map[$__ddless_relativePath]) && is_array($__ddless_cond_map[$__ddless_relativePath])) {
+                foreach ($__ddless_cond_map[$__ddless_relativePath] as $__ddless_condLine => $__ddless_condExpr) {
+                    if (is_string($__ddless_condExpr) && $__ddless_condExpr !== '') {
+                        $__ddless_fileConditions[(int)$__ddless_condLine] = $__ddless_condExpr;
                     }
                 }
             }
 
             $__ddless_log_map = $__ddless_raw['logpoints'] ?? [];
-            $fileLogpoints = [];
-            if (isset($__ddless_log_map[$relativePath]) && is_array($__ddless_log_map[$relativePath])) {
-                foreach ($__ddless_log_map[$relativePath] as $logLine => $logExpr) {
-                    if (is_string($logExpr) && $logExpr !== '') {
-                        $fileLogpoints[(int)$logLine] = $logExpr;
+            $__ddless_fileLogpoints = [];
+            if (isset($__ddless_log_map[$__ddless_relativePath]) && is_array($__ddless_log_map[$__ddless_relativePath])) {
+                foreach ($__ddless_log_map[$__ddless_relativePath] as $__ddless_logLine => $__ddless_logExpr) {
+                    if (is_string($__ddless_logExpr) && $__ddless_logExpr !== '') {
+                        $__ddless_fileLogpoints[(int)$__ddless_logLine] = $__ddless_logExpr;
                     }
                 }
             }
 
             $__ddless_dump_map = $__ddless_raw['dumppoints'] ?? [];
-            $fileDumppoints = [];
-            if (isset($__ddless_dump_map[$relativePath]) && is_array($__ddless_dump_map[$relativePath])) {
-                foreach ($__ddless_dump_map[$relativePath] as $dumpLine => $dumpExpr) {
-                    if (is_string($dumpExpr) && $dumpExpr !== '') {
-                        $fileDumppoints[(int)$dumpLine] = $dumpExpr;
+            $__ddless_fileDumppoints = [];
+            if (isset($__ddless_dump_map[$__ddless_relativePath]) && is_array($__ddless_dump_map[$__ddless_relativePath])) {
+                foreach ($__ddless_dump_map[$__ddless_relativePath] as $__ddless_dumpLine => $__ddless_dumpExpr) {
+                    if (is_string($__ddless_dumpExpr) && $__ddless_dumpExpr !== '') {
+                        $__ddless_fileDumppoints[(int)$__ddless_dumpLine] = $__ddless_dumpExpr;
                     }
                 }
             }
 
-            if (!empty($validLines)) {
-                $bpEntry = [
-                    'relativePath' => $normalizedPath,
-                    'lines' => array_unique($validLines),
+            if (!empty($__ddless_validLines)) {
+                $__ddless_bpEntry = [
+                    'relativePath' => $__ddless_normalizedPath,
+                    'lines' => array_unique($__ddless_validLines),
                 ];
-                if (!empty($fileConditions)) {
-                    $bpEntry['conditions'] = $fileConditions;
+                if (!empty($__ddless_fileConditions)) {
+                    $__ddless_bpEntry['conditions'] = $__ddless_fileConditions;
                 }
-                if (!empty($fileLogpoints)) {
-                    $bpEntry['logpoints'] = $fileLogpoints;
+                if (!empty($__ddless_fileLogpoints)) {
+                    $__ddless_bpEntry['logpoints'] = $__ddless_fileLogpoints;
                 }
-                if (!empty($fileDumppoints)) {
-                    $bpEntry['dumppoints'] = $fileDumppoints;
+                if (!empty($__ddless_fileDumppoints)) {
+                    $__ddless_bpEntry['dumppoints'] = $__ddless_fileDumppoints;
                 }
 
                 $__ddless_conddump_map = $__ddless_raw['conditionalDumppoints'] ?? [];
-                $fileConditionalDumppoints = [];
-                if (isset($__ddless_conddump_map[$relativePath]) && is_array($__ddless_conddump_map[$relativePath])) {
-                    foreach ($__ddless_conddump_map[$relativePath] as $cdLine => $cdData) {
-                        if (is_array($cdData) && isset($cdData['condition'], $cdData['expressions'])
-                            && is_string($cdData['condition']) && $cdData['condition'] !== ''
-                            && is_string($cdData['expressions']) && $cdData['expressions'] !== '') {
-                            $fileConditionalDumppoints[(int)$cdLine] = $cdData;
+                $__ddless_fileConditionalDumppoints = [];
+                if (isset($__ddless_conddump_map[$__ddless_relativePath]) && is_array($__ddless_conddump_map[$__ddless_relativePath])) {
+                    foreach ($__ddless_conddump_map[$__ddless_relativePath] as $__ddless_cdLine => $__ddless_cdData) {
+                        if (is_array($__ddless_cdData) && isset($__ddless_cdData['condition'], $__ddless_cdData['expressions'])
+                            && is_string($__ddless_cdData['condition']) && $__ddless_cdData['condition'] !== ''
+                            && is_string($__ddless_cdData['expressions']) && $__ddless_cdData['expressions'] !== '') {
+                            $__ddless_fileConditionalDumppoints[(int)$__ddless_cdLine] = $__ddless_cdData;
                         }
                     }
                 }
-                if (!empty($fileConditionalDumppoints)) {
-                    $bpEntry['conditionalDumppoints'] = $fileConditionalDumppoints;
+                if (!empty($__ddless_fileConditionalDumppoints)) {
+                    $__ddless_bpEntry['conditionalDumppoints'] = $__ddless_fileConditionalDumppoints;
                 }
 
-                $GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$absolutePath] = $bpEntry;
+                $GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$__ddless_absolutePath] = $__ddless_bpEntry;
 
-                $GLOBALS['__DDLESS_BREAKPOINT_FILES__'][realpath($absolutePath) ?: $absolutePath] = $bpEntry;
+                $GLOBALS['__DDLESS_BREAKPOINT_FILES__'][realpath($__ddless_absolutePath) ?: $__ddless_absolutePath] = $__ddless_bpEntry;
             }
         }
     }
@@ -403,8 +411,8 @@ if (is_file($__ddless_breakpoints_file)) {
 
 if (!empty($GLOBALS['__DDLESS_BREAKPOINT_FILES__'])) {
     ddless_log("[ddless] Loaded " . count($GLOBALS['__DDLESS_BREAKPOINT_FILES__']) . " files with breakpoints\n");
-    foreach ($GLOBALS['__DDLESS_BREAKPOINT_FILES__'] as $path => $info) {
-        ddless_log("[ddless]   - {$info['relativePath']}: lines " . implode(', ', $info['lines']) . "\n");
+    foreach ($GLOBALS['__DDLESS_BREAKPOINT_FILES__'] as $__ddless_path => $__ddless_info) {
+        ddless_log("[ddless]   - {$__ddless_info['relativePath']}: lines " . implode(', ', $__ddless_info['lines']) . "\n");
     }
 } else {
     ddless_log("[ddless] No breakpoints defined - execution will run without stopping\n");
@@ -428,14 +436,70 @@ class DDLessInstrumentableLineVisitor extends \PhpParser\NodeVisitorAbstract
     /** @var int[] Stack of function/method declaration start lines (for overlap detection) */
     private array $functionStartLineStack = [];
 
-    public function __construct(array $userBreakpointLines = [], bool $allowGlobalScope = false)
+    private string $code = '';
+
+    /** @var array<int, true> spl_object_id of statements that are the body of a braceless control structure */
+    private array $bracelessBodies = [];
+
+    public function __construct(array $userBreakpointLines = [], bool $allowGlobalScope = false, string $code = '')
     {
         $this->userBreakpointLines = $userBreakpointLines;
         $this->allowGlobalScope = $allowGlobalScope;
+        $this->code = $code;
+    }
+
+    private function hasBracelessBody(\PhpParser\Node $node): bool
+    {
+        if (!($node instanceof \PhpParser\Node\Stmt\If_
+            || $node instanceof \PhpParser\Node\Stmt\ElseIf_
+            || $node instanceof \PhpParser\Node\Stmt\Else_
+            || $node instanceof \PhpParser\Node\Stmt\For_
+            || $node instanceof \PhpParser\Node\Stmt\Foreach_
+            || $node instanceof \PhpParser\Node\Stmt\While_
+            || $node instanceof \PhpParser\Node\Stmt\Do_)
+        ) {
+            return false;
+        }
+        if ($this->code === '' || empty($node->stmts)) {
+            return false;
+        }
+
+        $hasLeadingCond = $node instanceof \PhpParser\Node\Stmt\If_
+            || $node instanceof \PhpParser\Node\Stmt\ElseIf_
+            || $node instanceof \PhpParser\Node\Stmt\While_;
+        $from = $hasLeadingCond ? $node->cond->getEndFilePos() + 1 : $node->getStartFilePos();
+        $to = $node->stmts[0]->getStartFilePos();
+        if ($from < 0 || $to <= $from) {
+            return false;
+        }
+
+        $tokens = @token_get_all('<?php ' . substr($this->code, $from, $to - $from));
+        if (!is_array($tokens)) {
+            return false;
+        }
+        $ignored = [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT, T_OPEN_TAG, T_OPEN_TAG_WITH_ECHO, T_CLOSE_TAG, T_INLINE_HTML];
+        $last = null;
+        foreach ($tokens as $token) {
+            if (is_array($token)) {
+                if (in_array($token[0], $ignored, true)) {
+                    continue;
+                }
+                $last = $token[1];
+            } else {
+                $last = $token;
+            }
+        }
+
+        return $last !== null && $last !== '{' && $last !== ':';
     }
 
     public function enterNode(\PhpParser\Node $node)
     {
+        $ownBraceless = $this->hasBracelessBody($node);
+        if ($ownBraceless) {
+            $this->bracelessBodies[spl_object_id($node->stmts[0])] = true;
+        }
+
         if ($node instanceof \PhpParser\Node\Stmt\Function_
             || $node instanceof \PhpParser\Node\Stmt\ClassMethod
             || $node instanceof \PhpParser\Node\Expr\Closure
@@ -469,9 +533,13 @@ class DDLessInstrumentableLineVisitor extends \PhpParser\NodeVisitorAbstract
         $type = $this->classifyNode($node);
         if ($type !== null) {
             $isUserBp = in_array($line, $this->userBreakpointLines, true);
+            $singleLineCond = ($node instanceof \PhpParser\Node\Stmt\If_ || $node instanceof \PhpParser\Node\Stmt\While_)
+                && $node->cond->getEndLine() === $line;
             $this->instrumentableLines[$line] = [
                 'type' => $type,
                 'isUserBp' => $isUserBp,
+                'bracelessBody' => isset($this->bracelessBodies[spl_object_id($node)]),
+                'condInjectable' => $ownBraceless && $singleLineCond,
             ];
         }
 
@@ -577,7 +645,7 @@ function ddless_analyze_code_ast(string $code, array $userBreakpointLines = []):
         }
 
         $allowGlobalScope = !empty($GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__']);
-        $visitor = new DDLessInstrumentableLineVisitor($userBreakpointLines, $allowGlobalScope);
+        $visitor = new DDLessInstrumentableLineVisitor($userBreakpointLines, $allowGlobalScope, $code);
         $traverser = new \PhpParser\NodeTraverser();
         $traverser->addVisitor($visitor);
         $traverser->traverse($stmts);
@@ -649,187 +717,93 @@ function ddless_resolve_user_breakpoints(array $instrumentableLines, array $user
  */
 function ddless_instrument_code_with_ast(string $code, string $absolutePath, string $relativePath, array $userBreakpointLines = [], array $breakpointConditions = [], array $breakpointLogpoints = [], array $breakpointDumppoints = [], array $breakpointConditionalDumppoints = []): ?string
 {
-    $instrumentableLines = ddless_analyze_code_ast($code, $userBreakpointLines);
+    $candidates = ddless_analyze_code_ast($code, []);
 
-    if (empty($instrumentableLines)) {
+    if (empty($candidates)) {
         return null;
     }
 
     $lines = explode("\n", $code);
 
-    krsort($instrumentableLines);
+    $plans = [];
+    foreach ($candidates as $lineNum => $info) {
+        $plan = ddless_plan_line_injection($lines, $lineNum, $info);
+        if ($plan !== null) {
+            $plans[$lineNum] = $plan;
+        }
+    }
+
+    if (empty($plans)) {
+        return null;
+    }
+
+    // A breakpoint always lands on a line that will really be instrumented:
+    // its own line, or the nearest injectable line above it.
+    $bpOrigins = [];
+    foreach (ddless_resolve_user_breakpoint_targets(array_keys($plans), $userBreakpointLines) as $bpLine => $targetLine) {
+        $bpOrigins[$targetLine][] = $bpLine;
+    }
+
+    krsort($plans);
+
+    $escapedPath = addslashes($absolutePath);
+    $escapedRelative = addslashes($relativePath);
+    $quote = fn(string $value): string => str_replace(["\\", "'"], ["\\\\", "\\'"], $value);
+    $extractModified = 'if (!empty($GLOBALS[\'__DDLESS_MODIFIED_VARS__\'])) { extract($GLOBALS[\'__DDLESS_MODIFIED_VARS__\'], EXTR_OVERWRITE); $GLOBALS[\'__DDLESS_MODIFIED_VARS__\'] = null; }';
+    $extractModifiedExpr = '(empty($GLOBALS[\'__DDLESS_MODIFIED_VARS__\']) || [\extract($GLOBALS[\'__DDLESS_MODIFIED_VARS__\'], EXTR_OVERWRITE), $GLOBALS[\'__DDLESS_MODIFIED_VARS__\'] = null])';
 
     $injectedCount = 0;
 
-    foreach ($instrumentableLines as $lineNum => $info) {
-        $type = $info['type'];
-        $isUserBp = $info['isUserBp'];
+    foreach ($plans as $lineNum => $plan) {
         $idx = $lineNum - 1;
-
-        if ($idx < 0 || $idx >= count($lines)) {
-            continue;
-        }
-
         $lineContent = $lines[$idx];
-        $trimmed = trim($lineContent);
+        $isUserBp = isset($bpOrigins[$lineNum]);
 
-        $escapedPath = addslashes($absolutePath);
-        $escapedRelative = addslashes($relativePath);
-        $isUserBpStr = $isUserBp ? 'true' : 'false';
-        $condition = $breakpointConditions[$lineNum] ?? '';
-        $escapedCondition = str_replace(["\\", "'"], ["\\\\", "\\'"], $condition);
-        $logpoint = $breakpointLogpoints[$lineNum] ?? '';
-        $escapedLogpoint = str_replace(["\\", "'"], ["\\\\", "\\'"], $logpoint);
-        $dumpExpr = $breakpointDumppoints[$lineNum] ?? '';
-        $escapedDump = str_replace(["\\", "'"], ["\\\\", "\\'"], $dumpExpr);
-
-        $condDumpData = $breakpointConditionalDumppoints[$lineNum] ?? null;
-        $condDumpCondition = '';
-        $condDumpExpressions = '';
-        if ($condDumpData !== null) {
-            $condDumpCondition = str_replace(["\\", "'"], ["\\\\", "\\'"], $condDumpData['condition'] ?? '');
-            $condDumpExpressions = str_replace(["\\", "'"], ["\\\\", "\\'"], $condDumpData['expressions'] ?? '');
-        }
-
-        $stepCall = "\\ddless_step_check('{$escapedPath}', {$lineNum}, '{$escapedRelative}', {$isUserBpStr}, '{$escapedCondition}', get_defined_vars(), debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT, 128), '{$escapedLogpoint}', '{$escapedDump}', '{$condDumpCondition}', '{$condDumpExpressions}')";
-        $extractModified = 'if (!empty($GLOBALS[\'__DDLESS_MODIFIED_VARS__\'])) { extract($GLOBALS[\'__DDLESS_MODIFIED_VARS__\'], EXTR_OVERWRITE); $GLOBALS[\'__DDLESS_MODIFIED_VARS__\'] = null; }';
-
-        if ($type === 'elseif') {
-            if (preg_match('/^(\s*)(}\s*(?:elseif|else\s*if)\s*\()(.+)(\)\s*\{.*)$/s', $lineContent, $m)) {
-                $lines[$idx] = "{$m[1]}{$m[2]}!{$stepCall} && ({$m[3]}){$m[4]} // DDLESS_BP";
-                $injectedCount++;
-            }
+        if ($plan['kind'] === 'block' && !$isUserBp) {
             continue;
         }
-
-        if (($type === 'else' || $type === 'catch' || $type === 'finally') && $isUserBp) {
-            if (str_ends_with($trimmed, '{')) {
-                preg_match('/^(\s*)/', $lineContent, $m);
-                $baseIndent = $m[1] ?? '';
-                $blockIndent = $baseIndent . '    ';
-                for ($ni = $idx + 1; $ni < count($lines); $ni++) {
-                    if (trim($lines[$ni]) !== '') {
-                        preg_match('/^(\s+)/', $lines[$ni], $nm);
-                        if (!empty($nm[1]) && strlen($nm[1]) > strlen($baseIndent)) {
-                            $blockIndent = $nm[1];
-                        }
-                        break;
-                    }
-                }
-                $bpCall = "{$blockIndent}{$stepCall}; {$extractModified} ";
-                array_splice($lines, $idx + 1, 0, [$bpCall]);
-                $injectedCount++;
-            }
-            continue;
-        }
-
-        if ($type === 'else' || $type === 'catch' || $type === 'finally') {
-            continue;
-        }
-
-        // Braceless control structures (if/while without { at end) — inject
-        // step_check into the condition, like the elseif pattern.  We cannot
-        // add a line before the statement because that would break the
-        // single-statement block.
-        if ($type === 'control') {
-            // Strip trailing inline comment to avoid false braceless detection
-            // e.g. `if ($x) { // comment with )` would otherwise look braceless
-            $lineNoComment = preg_replace('/\/\/.*$/', '', $lineContent);
-            $lineNoComment = preg_replace('/\/\*.*?\*\/\s*$/', '', $lineNoComment);
-            $trimmedNoComment = rtrim($lineNoComment);
-
-            if (preg_match('/^(\s*)((?:if|while)\s*\()(.+)(\)\s*)$/s', $trimmedNoComment, $m)) {
-                $lines[$idx] = "{$m[1]}{$m[2]}!{$stepCall} && ({$m[3]}){$m[4]} // DDLESS_BP";
-                $injectedCount++;
-                continue;
-            }
-            // for/foreach/do/switch/try without braces — rare, just skip
-            if (!preg_match('/\{\s*$/', $trimmedNoComment)) {
-                continue;
-            }
-        }
-
-        // Safety: skip lines whose first non-whitespace char is a structural
-        // delimiter. No classified statement (Expression, Return_, If_, etc.)
-        // ever starts with these characters, but they appear when:
-        //   - Multi-line signature: `) { $stmt` or `): Type { $stmt`
-        //   - Opening brace on own line: `{ $stmt`
-        //   - Closing brace: `}`
-        // Injecting before such lines would place code at the wrong scope.
-        if ($trimmed !== '' && strpos(')]}>{', $trimmed[0]) !== false) {
-            continue;
-        }
-
-        // Skip lines starting with case/default — injecting before would place
-        // code between switch { and the case label, causing a parse error.
-        // This happens when a statement shares a line with case, e.g.:
-        //   case 'ACL': return true;
-        if (preg_match('/^\s*(case\s|default\s*:)/', $lineContent)) {
-            continue;
-        }
-
-        // Inline PHP block — inject INSIDE the opening tag
-        if (preg_match('/^(\s*<\?php\s)/i', $lineContent)) {
-            $safeStepCall = str_replace(['\\', '$'], ['\\\\', '\\$'], $stepCall);
-            $safeExtract = str_replace(['\\', '$'], ['\\\\', '\\$'], $extractModified);
-            $replacement = '$1' . $safeStepCall . '; ' . $safeExtract . ' ';
-            $lines[$idx] = preg_replace('/^(\s*<\?php\s)/i', $replacement, $lineContent);
-            $injectedCount++;
-            continue;
-        }
-
-        // Skip lines starting with HTML tags — injecting before would place
-        // PHP code in HTML context. Also skip short echo tags.
-        $htmlCheck = '/^\s*<(?!\?php\s|\?' . '=)/i';
-        if (preg_match($htmlCheck, $lineContent)) {
-            continue;
-        }
-        $shortEchoCheck = '/^\s*<\?' . '=/';
-        if (preg_match($shortEchoCheck, $lineContent)) {
-            continue;
-        }
-
-        // Check if this statement is the body of a braceless if/else/elseif/for/foreach/while.
-        // Cannot safely instrument — the control structure's condition already has step_check.
-        $isBracelessBody = false;
-        for ($pi = $idx - 1; $pi >= 0; $pi--) {
-            $prevTrimmed = trim($lines[$pi]);
-            if ($prevTrimmed === '') continue;
-            if (preg_match('/\)\s*(\/\/.*)?$/', $prevTrimmed) && !preg_match('/\{\s*(\/\/.*)?$/', $prevTrimmed)) {
-                $isBracelessBody = true;
-            }
-            if (preg_match('/^(}\s*else|else)\s*$/i', $prevTrimmed)) {
-                $isBracelessBody = true;
-            }
-            break;
-        }
-
-        if ($isBracelessBody) {
-            continue;
-        }
-
-        // Skip if the previous non-empty line is a PHP attribute (#[...]).
-        // Injecting between an attribute and its target declaration causes
-        // "unexpected ..., expecting function" parse errors.
-        $isAfterAttribute = false;
-        for ($ai = $idx - 1; $ai >= 0; $ai--) {
-            $attrTrimmed = trim($lines[$ai]);
-            if ($attrTrimmed === '') continue;
-            if (preg_match('/^#\[/', $attrTrimmed)) {
-                $isAfterAttribute = true;
-            }
-            break;
-        }
-        if ($isAfterAttribute) {
-            continue;
-        }
-
-        preg_match('/^(\s*)/', $lineContent, $m);
-        $indent = $m[1] ?? '';
-
-        $bpCall = "{$indent}{$stepCall}; {$extractModified} // DDLESS_BP";
-        array_splice($lines, $idx, 0, [$bpCall]);
         $injectedCount++;
+
+        // Settings attached to a breakpoint that was moved up follow it.
+        $sourceLines = array_merge([$lineNum], $bpOrigins[$lineNum] ?? []);
+        $lookup = function (array $map) use ($sourceLines) {
+            foreach ($sourceLines as $sourceLine) {
+                if (isset($map[$sourceLine])) {
+                    return $map[$sourceLine];
+                }
+            }
+            return null;
+        };
+
+        $condDumpData = $lookup($breakpointConditionalDumppoints);
+        $stepArgs = "'{$escapedPath}', {$lineNum}, '{$escapedRelative}', " . ($isUserBp ? 'true' : 'false');
+        $stepCall = "\\ddless_step_gate({$stepArgs}) && \\ddless_step_check({$stepArgs}, '"
+            . $quote((string) ($lookup($breakpointConditions) ?? ''))
+            . "', get_defined_vars(), debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT, 128), '"
+            . $quote((string) ($lookup($breakpointLogpoints) ?? '')) . "', '"
+            . $quote((string) ($lookup($breakpointDumppoints) ?? '')) . "', '"
+            . $quote((string) ($condDumpData['condition'] ?? '')) . "', '"
+            . $quote((string) ($condDumpData['expressions'] ?? '')) . "')";
+
+        switch ($plan['kind']) {
+            case 'condition':
+                [$head, $open, $cond, $tail] = $plan['parts'];
+                $lines[$idx] = "{$head}{$open}!({$stepCall}) && {$extractModifiedExpr} && ({$cond}){$tail} // DDLESS_BP";
+                break;
+
+            case 'block':
+                $lines[$idx] = rtrim($lineContent) . " {$stepCall}; {$extractModified} /* DDLESS_BP */";
+                break;
+
+            case 'inline':
+                $lines[$idx] = $plan['parts'][0] . "{$stepCall}; {$extractModified} " . $plan['parts'][1];
+                break;
+
+            default:
+                preg_match('/^(\s*)/', $lineContent, $m);
+                $indent = $m[1] ?? '';
+                $lines[$idx] = "{$indent}{$stepCall}; {$extractModified} /* DDLESS_BP */ " . substr($lineContent, strlen($indent));
+        }
     }
 
     if ($injectedCount === 0) {
@@ -839,18 +813,154 @@ function ddless_instrument_code_with_ast(string $code, string $absolutePath, str
     return implode("\n", $lines);
 }
 
-function ddless_instrument_code_with_tokens(string $code, string $absolutePath, string $relativePath, array $userBreakpointLines = [], array $breakpointConditions = [], array $breakpointLogpoints = [], array $breakpointDumppoints = [], array $breakpointConditionalDumppoints = []): ?string
+/**
+ * Decide how (and whether) a step_check can be injected on a line.
+ * Returns null when the line cannot be instrumented safely.
+ *
+ * @return array{kind: string, parts?: string[]}|null
+ */
+function ddless_plan_line_injection(array $lines, int $lineNum, array $info): ?array
 {
-    return ddless_instrument_code_with_ast($code, $absolutePath, $relativePath, $userBreakpointLines, $breakpointConditions, $breakpointLogpoints, $breakpointDumppoints, $breakpointConditionalDumppoints);
+    $idx = $lineNum - 1;
+    if ($idx < 0 || $idx >= count($lines)) {
+        return null;
+    }
+
+    $type = $info['type'];
+    $lineContent = $lines[$idx];
+    $trimmed = trim($lineContent);
+
+    if ($type === 'elseif') {
+        if (preg_match('/^(\s*)(}\s*(?:elseif|else\s*if)\s*\()(.+)(\)\s*\{.*)$/s', $lineContent, $m)) {
+            return ['kind' => 'condition', 'parts' => [$m[1], $m[2], $m[3], $m[4]]];
+        }
+        return null;
+    }
+
+    // else / catch / finally only stop when the user put a breakpoint on them.
+    if ($type === 'else' || $type === 'catch' || $type === 'finally') {
+        return str_ends_with($trimmed, '{') ? ['kind' => 'block'] : null;
+    }
+
+    // Braceless if/while with the whole condition on this line: inject into
+    // the condition, because a statement cannot be added in front of a
+    // single-statement body.
+    if ($type === 'control' && !empty($info['condInjectable'])) {
+        // Strip trailing inline comment to avoid false braceless detection
+        // e.g. `if ($x) { // comment with )` would otherwise look braceless
+        $lineNoComment = preg_replace('/\/\/.*$/', '', $lineContent);
+        $lineNoComment = preg_replace('/\/\*.*?\*\/\s*$/', '', $lineNoComment);
+        if (preg_match('/^(\s*)((?:if|while)\s*\()(.+)(\)\s*)$/s', rtrim($lineNoComment), $m)) {
+            return ['kind' => 'condition', 'parts' => [$m[1], $m[2], $m[3], $m[4]]];
+        }
+    }
+
+    if (!empty($info['bracelessBody'])) {
+        return null;
+    }
+
+    // Safety: skip lines whose first non-whitespace char is a structural
+    // delimiter (`) { $stmt`, `{ $stmt`, `}`): injecting before them would
+    // place code at the wrong scope.
+    if ($trimmed !== '' && strpos(')]}>{', $trimmed[0]) !== false) {
+        return null;
+    }
+
+    // Skip lines starting with case/default — injecting before would place
+    // code between switch { and the case label, causing a parse error.
+    if (preg_match('/^\s*(case\s|default\s*:)/', $lineContent)) {
+        return null;
+    }
+
+    // Inline PHP block — inject INSIDE the opening tag
+    if (preg_match('/^(\s*<\?php\s)(.*)$/is', $lineContent, $m)) {
+        return ['kind' => 'inline', 'parts' => [$m[1], $m[2]]];
+    }
+
+    // Skip lines starting with HTML tags or short echo tags — injecting
+    // before would place PHP code in HTML context.
+    if (preg_match('/^\s*<(?!\?php\s|\?' . '=)/i', $lineContent) || preg_match('/^\s*<\?' . '=/', $lineContent)) {
+        return null;
+    }
+
+    // Skip if the previous non-empty line is a PHP attribute (#[...]).
+    for ($ai = $idx - 1; $ai >= 0; $ai--) {
+        $attrTrimmed = trim($lines[$ai]);
+        if ($attrTrimmed === '') continue;
+        if (preg_match('/^#\[/', $attrTrimmed)) {
+            return null;
+        }
+        break;
+    }
+
+    return ['kind' => 'prepend'];
+}
+
+/**
+ * Map each user breakpoint to the injectable line it will stop on: itself,
+ * or the nearest injectable line above. Breakpoints with nothing above are
+ * left out.
+ *
+ * @param int[] $injectableLines
+ * @param int[] $userBpLines
+ * @return array<int, int> breakpoint line => target line
+ */
+function ddless_resolve_user_breakpoint_targets(array $injectableLines, array $userBpLines): array
+{
+    sort($injectableLines, SORT_NUMERIC);
+    $injectableSet = array_flip($injectableLines);
+    $targets = [];
+
+    foreach ($userBpLines as $bpLine) {
+        $bpLine = (int) $bpLine;
+        if (isset($injectableSet[$bpLine])) {
+            $targets[$bpLine] = $bpLine;
+            continue;
+        }
+        $resolved = null;
+        foreach ($injectableLines as $candidate) {
+            if ($candidate > $bpLine) {
+                break;
+            }
+            $resolved = $candidate;
+        }
+        if ($resolved !== null) {
+            $targets[$bpLine] = $resolved;
+        }
+    }
+
+    return $targets;
 }
 
 function ddless_is_vendor_path(string $path): bool
 {
     $normalized = str_replace('\\', '/', $path);
-    return strpos($normalized, '/vendor/') !== false
+    if (strpos($normalized, '/vendor/') !== false
         || strpos($normalized, '/node_modules/') !== false
         || strpos($normalized, '/.ddless/') !== false
-        || strpos($normalized, '/cache/') !== false;
+    ) {
+        return true;
+    }
+
+    $root = defined('DDLESS_PROJECT_ROOT') && DDLESS_PROJECT_ROOT
+        ? rtrim(str_replace('\\', '/', (string) DDLESS_PROJECT_ROOT), '/') . '/'
+        : '';
+    if ($root === '/' || $root === '' || strncasecmp($normalized, $root, strlen($root)) !== 0) {
+        return strpos($normalized, '/cache/') !== false;
+    }
+
+    $relative = '/' . substr($normalized, strlen($root));
+    $frameworkCacheDirs = [
+        '/cache/', '/bootstrap/cache/', '/storage/framework/cache/', '/var/cache/', '/tmp/cache/',
+        '/runtime/cache/', '/wp-content/cache/', '/app/cache/', '/application/cache/',
+        '/writable/cache/', '/temp/cache/', '/data/cache/',
+    ];
+    foreach ($frameworkCacheDirs as $cacheDir) {
+        if (strncmp($relative, $cacheDir, strlen($cacheDir)) === 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 function ddless_is_step_mode_active(): bool
@@ -994,6 +1104,7 @@ function ddless_instrument_trace_only(string $code, string $absolutePath, string
                         $t = $tokens[$k];
                         $s = is_string($t) ? $t : $t[1];
                         if ($s === '{') $braceDepth++;
+                        if (is_array($t) && $t[0] === T_DOLLAR_OPEN_CURLY_BRACES) $braceDepth++;
                         if ($s === '}') {
                             $braceDepth--;
                             if ($braceDepth === 0) {
@@ -1044,6 +1155,16 @@ function ddless_instrument_trace_only(string $code, string $absolutePath, string
     return $output;
 }
 
+function ddless_has_bp_marker(string $code): bool
+{
+    return str_contains($code, '/* DDLESS_BP */') || str_contains($code, '// DDLESS_BP');
+}
+
+function ddless_count_bp_markers(string $code): int
+{
+    return substr_count($code, '/* DDLESS_BP */') + substr_count($code, '// DDLESS_BP');
+}
+
 // Used for step in/out to files that weren't pre-instrumented
 function ddless_instrument_php_file_ondemand(string $path, bool $silent = false): ?string
 {
@@ -1075,15 +1196,15 @@ function ddless_instrument_php_file_ondemand(string $path, bool $silent = false)
         return null;
     }
 
-    if (str_contains($content, '// DDLESS_BP')) {
+    if (ddless_has_bp_marker($content)) {
         return null;
     }
 
     // Use tokenizer-based instrumentation (no user breakpoints in on-demand mode)
-    $instrumented = ddless_instrument_code_with_tokens($content, $realPath, $relativePath, []);
+    $instrumented = ddless_instrument_code_with_ast($content, $realPath, $relativePath, []);
 
     if ($instrumented !== null && !$silent) {
-        $lineCount = substr_count($instrumented, '// DDLESS_BP');
+        $lineCount = ddless_count_bp_markers($instrumented);
         ddless_log("[ddless] On-demand instrumented {$lineCount} lines in {$relativePath}\n");
     }
 
@@ -1121,16 +1242,16 @@ function ddless_instrument_php_file(string $path): ?string
         return null;
     }
 
-    if (str_contains($content, '// DDLESS_BP')) {
+    if (ddless_has_bp_marker($content)) {
         ddless_log("[ddless] File already instrumented, skipping\n");
         return null;
     }
 
     // Use tokenizer-based instrumentation
-    $instrumented = ddless_instrument_code_with_tokens($content, $realPath, $relativePath, $userBreakpointLines, $breakpointConditions, $breakpointLogpoints, $breakpointDumppoints, $breakpointConditionalDumppoints);
+    $instrumented = ddless_instrument_code_with_ast($content, $realPath, $relativePath, $userBreakpointLines, $breakpointConditions, $breakpointLogpoints, $breakpointDumppoints, $breakpointConditionalDumppoints);
 
     if ($instrumented !== null) {
-        $lineCount = substr_count($instrumented, '// DDLESS_BP');
+        $lineCount = ddless_count_bp_markers($instrumented);
         ddless_log("[ddless] Instrumented {$lineCount} lines in {$relativePath}\n");
     } else {
         ddless_log("[ddless] No instrumentable lines found in {$relativePath}\n");
@@ -1221,6 +1342,18 @@ function ddless_get_current_function_info(array $backtrace): array
     ];
 }
 
+function ddless_is_bindable_scope(string $class): bool
+{
+    if (!class_exists($class, false)) {
+        return false;
+    }
+    try {
+        return !(new \ReflectionClass($class))->isInternal();
+    } catch (\Throwable $e) {
+        return false;
+    }
+}
+
 // Helper: evaluate an expression with $this bound to the caller's object context.
 // When called from a global function (ddless_step_check / ddless_handle_breakpoint),
 // $this is not available. This helper extracts the caller's object from the backtrace
@@ -1236,30 +1369,37 @@ function ddless_eval_in_context(string $expression, array &$scopeVariables, arra
         }
         if (isset($frame['object']) && is_object($frame['object'])) {
             $callerObject = $frame['object'];
+        }
+        $frameClass = $frame['class'] ?? null;
+        if (is_string($frameClass) && $frameClass !== '' && ddless_is_bindable_scope($frameClass)) {
+            $callerClass = $frameClass;
+        } elseif ($callerObject !== null && ddless_is_bindable_scope(get_class($callerObject))) {
             $callerClass = get_class($callerObject);
         }
         break; // Only check the first non-ddless frame
     }
 
-    $evalCode = $returnValue ? "return ({$expression});" : $expression;
+    $__ddless_eval_code__ = $returnValue ? "return ({$expression});" : $expression;
+    $__ddless_eval_return__ = $returnValue;
+    $__ddless_eval_scope__ = &$scopeVariables;
 
-    $evalFn = function () use ($evalCode, &$scopeVariables, $returnValue) {
-        extract($scopeVariables, EXTR_SKIP);
-        $__ddless_eval_result__ = @eval($evalCode);
+    $evalFn = function () use ($__ddless_eval_code__, &$__ddless_eval_scope__, $__ddless_eval_return__) {
+        extract($__ddless_eval_scope__, EXTR_SKIP);
+        $__ddless_eval_result__ = @eval($__ddless_eval_code__);
 
-        if (!$returnValue) {
+        if (!$__ddless_eval_return__) {
             // Playground mode: capture modified/new variables and propagate back
             $__ddless_current__ = get_defined_vars();
             unset(
-                $__ddless_current__['evalCode'],
-                $__ddless_current__['scopeVariables'],
-                $__ddless_current__['returnValue'],
+                $__ddless_current__['__ddless_eval_code__'],
+                $__ddless_current__['__ddless_eval_scope__'],
+                $__ddless_current__['__ddless_eval_return__'],
                 $__ddless_current__['__ddless_eval_result__'],
                 $__ddless_current__['__ddless_current__']
             );
             foreach ($__ddless_current__ as $__k__ => $__v__) {
-                if (!array_key_exists($__k__, $scopeVariables) || $scopeVariables[$__k__] !== $__v__) {
-                    $scopeVariables[$__k__] = $__v__;
+                if (!array_key_exists($__k__, $__ddless_eval_scope__) || $__ddless_eval_scope__[$__k__] !== $__v__) {
+                    $__ddless_eval_scope__[$__k__] = $__v__;
                 }
             }
         }
@@ -1267,11 +1407,48 @@ function ddless_eval_in_context(string $expression, array &$scopeVariables, arra
         return $__ddless_eval_result__;
     };
 
-    if ($callerObject !== null) {
-        $evalFn = \Closure::bind($evalFn, $callerObject, $callerClass);
+    if ($callerClass !== null) {
+        $bound = @\Closure::bind($evalFn, $callerObject, $callerClass);
+        if ($bound instanceof \Closure) {
+            $evalFn = $bound;
+        }
+    } elseif ($callerObject !== null) {
+        $bound = @\Closure::bind($evalFn, $callerObject);
+        if ($bound instanceof \Closure) {
+            $evalFn = $bound;
+        }
     }
 
     return $evalFn();
+}
+
+/**
+ * Cheap pre-check injected in front of every ddless_step_check() call. It
+ * counts the hit and answers whether step_check has anything to do, so an
+ * idle line does not pay for get_defined_vars() and debug_backtrace().
+ */
+function ddless_step_gate(string $file, int $line, string $relativePath, bool $isUserBreakpoint): bool
+{
+    $positionKey = "{$file}:{$line}";
+    $nth = ($GLOBALS['__DDLESS_HIT_COUNTS__'][$positionKey] = ($GLOBALS['__DDLESS_HIT_COUNTS__'][$positionKey] ?? 0) + 1);
+
+    $target = $GLOBALS['__DDLESS_REPLAY_TARGET__'] ?? null;
+    if ($target !== null) {
+        $pass = $target['line'] === $line
+            && $target['nth'] === $nth
+            && $target['file'] === str_replace('\\', '/', $relativePath);
+    } else {
+        $pass = $isUserBreakpoint
+            || !empty($GLOBALS['__DDLESS_WATCHES__'])
+            || ddless_is_step_mode_active()
+            || ddless_tf_is_recording();
+    }
+
+    if ($pass) {
+        $GLOBALS['__DDLESS_GATE_COUNT__'] = [$positionKey, $nth];
+    }
+
+    return $pass;
 }
 
 // Step check function - decides whether to pause based on step mode and line type
@@ -1294,7 +1471,13 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
     // Counted before any early return so the numbering is identical between a
     // recording run and a replay of it.
     $positionKey = "{$file}:{$line}";
-    $nth = ($GLOBALS['__DDLESS_HIT_COUNTS__'][$positionKey] = ($GLOBALS['__DDLESS_HIT_COUNTS__'][$positionKey] ?? 0) + 1);
+    $gateCount = $GLOBALS['__DDLESS_GATE_COUNT__'] ?? null;
+    $GLOBALS['__DDLESS_GATE_COUNT__'] = null;
+    if ($gateCount !== null && $gateCount[0] === $positionKey) {
+        $nth = $gateCount[1];
+    } else {
+        $nth = ($GLOBALS['__DDLESS_HIT_COUNTS__'][$positionKey] = ($GLOBALS['__DDLESS_HIT_COUNTS__'][$positionKey] ?? 0) + 1);
+    }
 
     // REPLAY: race to the target position. Returning here skips watches,
     // logpoints, dumppoints (which would exit()) and every pause — the run must
@@ -1475,7 +1658,6 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
         exit(0);
     }
 
-    // Deduplication: skip if the same file:line:message was emitted within 150ms
     if ($logpointExpression !== '' && $isUserBreakpoint) {
         try {
             // Replace {expression} placeholders with evaluated values
@@ -1491,15 +1673,7 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
                 }
             }, $logpointExpression);
 
-            // Deduplicate: same file:line:message within 150ms is skipped
             $now = microtime(true);
-            $dedupeKey = "{$relativePath}:{$line}:{$message}";
-            $lastEmit = $GLOBALS['__DDLESS_LOGPOINT_DEDUP__'][$dedupeKey] ?? 0.0;
-            if (($now - $lastEmit) < 0.15) {
-                $emitWatchResults();
-                return; // Duplicate logpoint, skip
-            }
-            $GLOBALS['__DDLESS_LOGPOINT_DEDUP__'][$dedupeKey] = $now;
 
             $payload = json_encode([
                 'file' => $relativePath,
@@ -1539,21 +1713,7 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
             }
         }
 
-        $bpKey = "{$file}:{$line}";
-
-        $alreadyHit = isset($GLOBALS['__DDLESS_HIT_USER_BPS__'][$bpKey]);
-        $isInStepMode = ($GLOBALS['__DDLESS_STEP_IN_MODE__'] ?? false)
-            || ($GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] ?? null) !== null
-            || ($GLOBALS['__DDLESS_STEP_OUT_TARGET__'] ?? null) !== null;
-
-        if ($alreadyHit && !$isInStepMode) {
-            // Skip this breakpoint - already hit and user pressed Continue
-            ddless_log("[ddless] Skipping already-hit breakpoint: {$relativePath}:{$line}\n");
-            return;
-        }
-
-        // Mark as hit and stop
-        $GLOBALS['__DDLESS_HIT_USER_BPS__'][$bpKey] = true;
+        $GLOBALS['__DDLESS_HIT_USER_BPS__']["{$file}:{$line}"] = true;
         ddless_handle_breakpoint($file, $line, $relativePath, $scopeVariables, $scopeBacktrace);
         return;
     }
@@ -1602,10 +1762,14 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
     // STEP OUT MODE: Stop when we've returned to the caller function
     if ($GLOBALS['__DDLESS_STEP_OUT_TARGET__'] !== null) {
         $targetFunction = $GLOBALS['__DDLESS_STEP_OUT_TARGET__'];
-        
-        if ($currentFunction !== null && $currentFunction === $targetFunction) {
+        $targetDepth = $GLOBALS['__DDLESS_STEP_OUT_DEPTH__'] ?? null;
+
+        if ($currentFunction !== null && $currentFunction === $targetFunction
+            && ($targetDepth === null || $context['depth'] === $targetDepth)
+        ) {
             // We've returned to the caller function, pause here
             $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null;
+            $GLOBALS['__DDLESS_STEP_OUT_DEPTH__'] = null;
             ddless_handle_breakpoint($file, $line, $relativePath, $scopeVariables, $scopeBacktrace);
             return;
         }
@@ -1702,7 +1866,7 @@ if (!function_exists('ddless_eager_expand')) {
                 if ($prop->isStatic()) continue;
                 $name = $prop->getName();
                 try {
-                    $prop->setAccessible(true);
+                    if (PHP_VERSION_ID < 80100) { $prop->setAccessible(true); }
                     if (!$prop->isInitialized($obj)) {
                         $result[$name] = '[uninitialized]';
                         continue;
@@ -1807,7 +1971,7 @@ if (!function_exists('ddless_lazy_expand')) {
             $name = $prop->getName();
             $vis = $prop->isPublic() ? 'public' : ($prop->isProtected() ? 'protected' : 'private');
             try {
-                $prop->setAccessible(true);
+                if (PHP_VERSION_ID < 80100) { $prop->setAccessible(true); }
                 if (!$prop->isInitialized($obj)) {
                     $children[$name] = ['visibility' => $vis, 'value' => '[uninitialized]'];
                     continue;
@@ -1853,7 +2017,12 @@ if (!function_exists('ddless_normalize_value')) {
 
         if (is_array($value)) {
             $result = [];
+            $maxItems = $GLOBALS['__DDLESS_MAX_ARRAY_ITEMS__'] ?? 5000;
             foreach ($value as $key => $item) {
+                if (count($result) >= $maxItems) {
+                    $result['__ddless_notice__'] = sprintf('Showing first %d of %d items.', $maxItems, count($value));
+                    break;
+                }
                 $result[$key] = ddless_normalize_value($item, $depth + 1);
             }
             return $result;
@@ -1866,7 +2035,9 @@ if (!function_exists('ddless_normalize_value')) {
             return $value->name; // Return the name for unit enums
         }
 
-        if ($value instanceof \JsonSerializable) {
+        $allowUserSerializers = empty($GLOBALS['__DDLESS_SKIP_USER_SERIALIZERS__']);
+
+        if ($allowUserSerializers && $value instanceof \JsonSerializable) {
             try {
                 return ddless_normalize_value($value->jsonSerialize(), $depth + 1);
             } catch (\Throwable $exception) {
@@ -1874,7 +2045,7 @@ if (!function_exists('ddless_normalize_value')) {
             }
         }
 
-        if (interface_exists('Illuminate\Contracts\Support\Arrayable') && is_object($value) && is_a($value, 'Illuminate\Contracts\Support\Arrayable')) {
+        if ($allowUserSerializers && interface_exists('Illuminate\Contracts\Support\Arrayable') && is_object($value) && is_a($value, 'Illuminate\Contracts\Support\Arrayable')) {
             try {
                 return ddless_normalize_value($value->toArray(), $depth + 1);
             } catch (\Throwable $exception) {
@@ -2150,7 +2321,7 @@ function ddless_extract_this_properties(array $backtrace): array
 
             // Get all properties (including private/protected)
             foreach ($reflection->getProperties() as $property) {
-                $property->setAccessible(true);
+                if (PHP_VERSION_ID < 80100) { $property->setAccessible(true); }
                 $propName = $property->getName();
 
                 // Skip internal properties
@@ -2200,7 +2371,7 @@ function ddless_extract_static_properties(array $backtrace): array
             $reflection = new ReflectionClass($className);
 
             foreach ($reflection->getProperties(ReflectionProperty::IS_STATIC) as $property) {
-                $property->setAccessible(true);
+                if (PHP_VERSION_ID < 80100) { $property->setAccessible(true); }
                 $propName = $property->getName();
 
                 // Skip internal properties
@@ -2471,8 +2642,25 @@ function ddless_tf_prune_old_runs(int $keep = 20): void
     if ($files === false || count($files) <= $keep) {
         return;
     }
-    sort($files);
+
+    $startedAt = [];
+    foreach ($files as $file) {
+        if (preg_match('/^\d+-(\d{13})\.ndjson$/', basename($file), $m)) {
+            $startedAt[$file] = (float) $m[1];
+        } else {
+            $mtime = @filemtime($file);
+            $startedAt[$file] = $mtime === false ? 0.0 : $mtime * 1000.0;
+        }
+    }
+    usort($files, function (string $a, string $b) use ($startedAt): int {
+        return [$startedAt[$a], $a] <=> [$startedAt[$b], $b];
+    });
+
+    $current = str_replace('\\', '/', ddless_tf_timeline_file());
     foreach (array_slice($files, 0, count($files) - $keep) as $stale) {
+        if (str_replace('\\', '/', $stale) === $current) {
+            continue;
+        }
         @unlink($stale);
     }
 }
@@ -2562,8 +2750,12 @@ function ddless_tf_capture_vars(array $scopeVariables): array
     static $ignored = ['GLOBALS', '_SERVER', '_GET', '_POST', '_FILES', '_COOKIE', '_SESSION', '_REQUEST', '_ENV'];
 
     $previousLazy = $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] ?? false;
+    $previousEager = $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] ?? false;
     $previousDepth = $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] ?? 4;
+    $previousSkipSerializers = $GLOBALS['__DDLESS_SKIP_USER_SERIALIZERS__'] ?? false;
     $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = false;
+    $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = true;
+    $GLOBALS['__DDLESS_SKIP_USER_SERIALIZERS__'] = true;
     if (($GLOBALS['__DDLESS_TF_DETAIL__'] ?? 'normal') !== 'full') {
         $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] = 1;
     }
@@ -2589,6 +2781,8 @@ function ddless_tf_capture_vars(array $scopeVariables): array
         // A single unserializable value must not kill the recording.
     } finally {
         $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = $previousLazy;
+        $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = $previousEager;
+        $GLOBALS['__DDLESS_SKIP_USER_SERIALIZERS__'] = $previousSkipSerializers;
         $GLOBALS['__DDLESS_SERIALIZE_DEPTH__'] = $previousDepth;
     }
 
@@ -2923,10 +3117,12 @@ function ddless_handle_breakpoint(
         if ($responseData === null) {
             ddless_log("[ddless] Timeout waiting for command, forcing continue\n");
             ddless_cleanup_debug_files();
+            ddless_lazy_reset();
             $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false;
             $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null;
             $GLOBALS['__DDLESS_STEP_OVER_FILE__'] = null;
             $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null;
+            $GLOBALS['__DDLESS_STEP_OUT_DEPTH__'] = null;
             $timeoutPayload = json_encode([
                 'type' => 'timeout',
                 'sessionId' => $sessionId,
@@ -2944,7 +3140,6 @@ function ddless_handle_breakpoint(
         if ($command === 'evaluate') {
             $expression = $responseData['expression'] ?? '';
             $requestId = $responseData['requestId'] ?? '';
-            $useStatements = $responseData['useStatements'] ?? [];
 
             if ($expression === '') {
                 $evalPayload = [
@@ -2956,7 +3151,7 @@ function ddless_handle_breakpoint(
                     'error' => 'Empty expression',
                     'duration_ms' => 0,
                 ];
-                ddless_write_breakpoint_state($evalPayload);
+                ddless_write_breakpoint_state($evalPayload, false);
                 continue;
             }
 
@@ -2973,7 +3168,16 @@ function ddless_handle_breakpoint(
                 'header'     => 'Headers cannot be sent during a debug session.',
             ];
             foreach ($blockedFunctions as $fn => $hint) {
-                if (preg_match('/\b' . preg_quote($fn, '/') . '\s*\(/i', $expression)) {
+                $isBlocked = false;
+                if (preg_match_all('/(->|::)?\s*(?<![\w\$\\\\])' . preg_quote($fn, '/') . '\s*\(/i', $expression, $blockedMatches, PREG_SET_ORDER)) {
+                    foreach ($blockedMatches as $blockedMatch) {
+                        if (($blockedMatch[1] ?? '') === '') {
+                            $isBlocked = true;
+                            break;
+                        }
+                    }
+                }
+                if ($isBlocked) {
                     $evalPayload = [
                         'type' => 'evaluate_result',
                         'sessionId' => $sessionId,
@@ -2983,7 +3187,7 @@ function ddless_handle_breakpoint(
                         'error' => "{$fn}() is not allowed in the playground. {$hint}",
                         'duration_ms' => 0,
                     ];
-                    ddless_write_breakpoint_state($evalPayload);
+                    ddless_write_breakpoint_state($evalPayload, false);
                     continue 2;
                 }
             }
@@ -3042,7 +3246,7 @@ function ddless_handle_breakpoint(
                 ];
             }
 
-            ddless_write_breakpoint_state($evalPayload);
+            ddless_write_breakpoint_state($evalPayload, false);
             ddless_log("[ddless] Evaluate result written, waiting for next command...\n");
             continue;
         }
@@ -3059,7 +3263,7 @@ function ddless_handle_breakpoint(
                 'token' => $token,
                 'result' => $expanded,
             ];
-            ddless_write_breakpoint_state($expandPayload);
+            ddless_write_breakpoint_state($expandPayload, false);
             ddless_log("[ddless] Expand result written for token {$token}, waiting for next command...\n");
             continue;
         }
@@ -3068,6 +3272,8 @@ function ddless_handle_breakpoint(
     }
 
     } // end else (non-terminal mode)
+
+    ddless_lazy_reset();
 
     if ($rawVariables !== $originalRawVariables) {
         $GLOBALS['__DDLESS_MODIFIED_VARS__'] = $rawVariables;
@@ -3078,6 +3284,7 @@ function ddless_handle_breakpoint(
         $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null;
         $GLOBALS['__DDLESS_STEP_OVER_FILE__'] = null;
         $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null;
+        $GLOBALS['__DDLESS_STEP_OUT_DEPTH__'] = null;
     };
 
     $getContext = function() use ($rawBacktrace) {
@@ -3142,6 +3349,9 @@ function ddless_handle_breakpoint(
             $resetAllStepModes();
             $ctx = $getContext();
             $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = $ctx['caller'];
+            $GLOBALS['__DDLESS_STEP_OUT_DEPTH__'] = ($ctx['caller'] !== null && count($rawBacktrace) < 128)
+                ? $ctx['depth'] - 1
+                : null;
             ddless_log("[ddless] Step Out - will stop when returning to: " . ($ctx['caller'] ?? 'top-level') . "\n");
             break;
 
@@ -3196,39 +3406,11 @@ function ddless_find_all_php_files(string $directory): array
                 }
             }
         }
-        fwrite(STDERR, "[ddless] Debug scope active: " . implode(', ', $scopePaths) . " — found " . count($files) . " files\n");
+        ddless_log("[ddless] Debug scope active: " . implode(', ', $scopePaths) . " — found " . count($files) . " files\n");
         return $files;
     }
 
-    $files = [];
-    $excludeDirs = ['vendor', 'node_modules', '.ddless', 'storage', 'bootstrap/cache', 'cache', '.git', '.idea', '.vscode'];
-
-    $iterator = new RecursiveIteratorIterator(
-        new RecursiveCallbackFilterIterator(
-            new RecursiveDirectoryIterator($directory, RecursiveDirectoryIterator::SKIP_DOTS),
-            function ($current, $key, $iterator) use ($excludeDirs) {
-                // Skip excluded directories
-                if ($current->isDir()) {
-                    $dirName = $current->getFilename();
-                    foreach ($excludeDirs as $exclude) {
-                        if ($dirName === $exclude || strpos($current->getPathname(), DIRECTORY_SEPARATOR . $exclude . DIRECTORY_SEPARATOR) !== false) {
-                            return false;
-                        }
-                    }
-                }
-                return true;
-            }
-        ),
-        RecursiveIteratorIterator::LEAVES_ONLY
-    );
-
-    foreach ($iterator as $file) {
-        if ($file->isFile() && $file->getExtension() === 'php') {
-            $files[] = $file->getPathname();
-        }
-    }
-
-    return $files;
+    return [];
 }
 
 function ddless_emit_progress(int $current, int $total, string $currentFile): void
@@ -3251,7 +3433,7 @@ function ddless_emit_progress(int $current, int $total, string $currentFile): vo
     fflush($GLOBALS['__DDLESS_IPC_STREAM__']);
 }
 
-define('DDLESS_CACHE_VERSION', '3.4'); // v3.4: playground variable modification propagation via extract
+define('DDLESS_CACHE_VERSION', '3.6'); // v3.6: same-line injection behind ddless_step_gate()
 
 function ddless_get_cache_dir(): string
 {
@@ -3318,7 +3500,16 @@ function ddless_load_cache_index(): array
             'files' => [],
         ];
     }
-    
+
+    if (!empty($data['allowGlobalScope']) !== !empty($GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__'])) {
+        ddless_log("[ddless][cache] allowGlobalScope changed, invalidating all cache\n");
+        ddless_clear_cache();
+        return [
+            'version' => DDLESS_CACHE_VERSION,
+            'files' => [],
+        ];
+    }
+
     return $data;
 }
 
@@ -3329,6 +3520,7 @@ function ddless_save_cache_index(array $index): bool
     }
     
     $indexPath = ddless_get_cache_index_path();
+    $index['allowGlobalScope'] = !empty($GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__']);
     $content = json_encode($index, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     
     return @file_put_contents($indexPath, $content) !== false;
@@ -3469,7 +3661,8 @@ function ddless_compute_context_hash(): string
     $bpFiles = array_keys($GLOBALS['__DDLESS_BREAKPOINT_FILES__'] ?? []);
     sort($bpFiles);
     $scope = getenv('DDLESS_DEBUG_SCOPE') ?: '';
-    return md5(implode("\0", $bpFiles) . '|' . $scope);
+    $globalScope = !empty($GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__']) ? '1' : '0';
+    return md5(implode("\0", $bpFiles) . '|' . $scope . '|' . $globalScope);
 }
 
 /**
@@ -3545,8 +3738,8 @@ function ddless_try_manifest_fast_path(): bool
         // Files with breakpoints must always be re-instrumented
         $hasBreakpoints = isset($GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$realPath]);
 
-        // Check if file is in the invalidation queue
-        $isInvalidated = isset($invalidatedSet[$realPath]);
+        $isInvalidated = isset($invalidatedSet[$realPath])
+            || (!$hasBreakpoints && ddless_file_has_changed($realPath, $cacheIndex));
 
         if ($hasBreakpoints || $isInvalidated) {
             // Re-instrument this specific file (not the whole project)
@@ -3716,29 +3909,29 @@ function ddless_instrument_all_project_files(): int
 
 if (ddless_is_debug_mode_active()) {
     if (!empty($GLOBALS['__DDLESS_BREAKPOINT_FILES__'])) {
-        foreach ($GLOBALS['__DDLESS_BREAKPOINT_FILES__'] as $absolutePath => $info) {
-            if (!is_file($absolutePath)) {
+        foreach ($GLOBALS['__DDLESS_BREAKPOINT_FILES__'] as $__ddless_absolutePath => $__ddless_info) {
+            if (!is_file($__ddless_absolutePath)) {
                 continue;
             }
             
-            if (isset($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$absolutePath])) {
+            if (isset($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$__ddless_absolutePath])) {
                 continue;
             }
             
-            $instrumented = ddless_instrument_php_file($absolutePath);
-            if ($instrumented !== null) {
-                $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$absolutePath] = $instrumented;
+            $__ddless_instrumented = ddless_instrument_php_file($__ddless_absolutePath);
+            if ($__ddless_instrumented !== null) {
+                $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$__ddless_absolutePath] = $__ddless_instrumented;
                 if (function_exists('opcache_invalidate')) {
-                    opcache_invalidate($absolutePath, true);
+                    opcache_invalidate($__ddless_absolutePath, true);
                 }
-                $realAbsPath = realpath($absolutePath);
-                if ($realAbsPath && $realAbsPath !== $absolutePath) {
-                    $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$realAbsPath] = $instrumented;
+                $__ddless_realAbsPath = realpath($__ddless_absolutePath);
+                if ($__ddless_realAbsPath && $__ddless_realAbsPath !== $__ddless_absolutePath) {
+                    $GLOBALS['__DDLESS_INSTRUMENTED_CODE__'][$__ddless_realAbsPath] = $__ddless_instrumented;
                     if (function_exists('opcache_invalidate')) {
-                        opcache_invalidate($realAbsPath, true);
+                        opcache_invalidate($__ddless_realAbsPath, true);
                     }
                 }
-                ddless_log("[ddless] Instrumented (with breakpoints): {$info['relativePath']}\n");
+                ddless_log("[ddless] Instrumented (with breakpoints): {$__ddless_info['relativePath']}\n");
             }
         }
     }
@@ -3759,7 +3952,6 @@ class DDLessSafeIncludeWrapper
     private $position = 0;
     private $path = '';
     private static $registered = false;
-    private static $inOperation = false;
 
     public static function register(): void
     {
@@ -3811,8 +4003,9 @@ class DDLessSafeIncludeWrapper
         
         $isReadMode = ($mode === 'r' || $mode === 'rb');
         $isPhpFile = str_ends_with($path, '.php');
-        
-        if ($isReadMode && $isPhpFile) {
+        $isInclude = ((int) $options & 128) !== 0; // STREAM_OPEN_FOR_INCLUDE
+
+        if ($isReadMode && $isPhpFile && $isInclude) {
             if (self::isInstrumentedFile($path)) {
                 $this->content = self::getInstrumentedContent($path);
                 if ($this->content !== null) {
@@ -3839,7 +4032,7 @@ class DDLessSafeIncludeWrapper
                                 $bpInfo = $GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$realPath]
                                     ?? $GLOBALS['__DDLESS_BREAKPOINT_FILES__'][$path] ?? null;
                                 if ($bpInfo) {
-                                    $reInstrumented = ddless_instrument_code_with_tokens(
+                                    $reInstrumented = ddless_instrument_code_with_ast(
                                         $baseCode, $realPath, $relPath,
                                         $bpInfo['lines'],
                                         $bpInfo['conditions'] ?? [],
@@ -3986,6 +4179,11 @@ class DDLessSafeIncludeWrapper
         $this->content = null;
     }
 
+    public function stream_cast($cast_as)
+    {
+        return is_resource($this->handle) ? $this->handle : false;
+    }
+
     public function stream_set_option($option, $arg1, $arg2) { return false; }
     public function stream_lock($operation) {
         if ($this->handle && is_resource($this->handle)) {
@@ -4058,8 +4256,8 @@ if (ddless_is_debug_mode_active()) {
     if (empty($GLOBALS['__DDLESS_DEFER_WRAPPER__'])) {
         DDLessSafeIncludeWrapper::register();
         $GLOBALS['__DDLESS_WRAPPER_REGISTERED__'] = true;
-        $hasPreInstrumented = !empty($GLOBALS['__DDLESS_INSTRUMENTED_CODE__']);
-        ddless_log("[ddless] Stream wrapper registered (pre-instrumented: " . ($hasPreInstrumented ? 'yes' : 'no') . ", on-demand: enabled)\n");
+        $__ddless_hasPreInstrumented = !empty($GLOBALS['__DDLESS_INSTRUMENTED_CODE__']);
+        ddless_log("[ddless] Stream wrapper registered (pre-instrumented: " . ($__ddless_hasPreInstrumented ? 'yes' : 'no') . ", on-demand: enabled)\n");
     } else {
         ddless_log("[ddless] Stream wrapper registration deferred (will register after autoload)\n");
     }

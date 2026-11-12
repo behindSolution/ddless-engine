@@ -25,11 +25,16 @@ $testFiles = [
     'StepOverLogicTest.php',
     'StepInLogicTest.php',
     'StepOutLogicTest.php',
+    'StepGateTest.php',
     'WatchHistoryTest.php',
     'MarkerFormatTest.php',
     'TaskEmitCapTest.php',
     'LazyExpandTest.php',
     'TimeframeTest.php',
+    'StreamWrapperTest.php',
+    'DebugContextTest.php',
+    'PauseProtocolTest.php',
+    'EngineBootstrapTest.php',
 ];
 
 foreach ($testFiles as $file) {

@@ -58,7 +58,7 @@ function ddless_serialize_value($value, int $depth = 0, int $maxDepth = 10, int 
         $result = ['__type' => 'object', '__class' => get_class($value)];
         try {
             $ref = new \ReflectionClass($value);
-            foreach ($ref->getProperties() as $prop) { $prop->setAccessible(true); if ($prop->isInitialized($value)) $result[$prop->getName()] = ddless_serialize_value($prop->getValue($value), $depth + 1, $maxDepth, $maxArrayItems); }
+            foreach ($ref->getProperties() as $prop) { if (PHP_VERSION_ID < 80100) { $prop->setAccessible(true); } if ($prop->isInitialized($value)) $result[$prop->getName()] = ddless_serialize_value($prop->getValue($value), $depth + 1, $maxDepth, $maxArrayItems); }
         } catch (\Throwable $e) { $result['__error'] = $e->getMessage(); }
         return $result;
     }

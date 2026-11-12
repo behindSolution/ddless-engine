@@ -343,3 +343,45 @@ test('invalidated_files.json path is in session dir', function () {
 
     assert_eq($sessionDir . '/invalidated_files.json', $invalidatedPath);
 });
+
+section('Manifest — context hash and settings');
+
+test('context hash changes when allowGlobalScope changes', function () {
+    $previous = $GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__'];
+    $GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__'] = false;
+    $off = ddless_compute_context_hash();
+    $GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__'] = true;
+    $on = ddless_compute_context_hash();
+    $GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__'] = $previous;
+    assert_true($off !== $on, 'cached files instrumented with the old setting would be reused');
+});
+
+section('Manifest — fast path and files changed on disk');
+
+test('a file edited without an invalidation entry is re-instrumented', function () {
+    $source = fn(string $version) => "<?php\nfunction manifest_probe() {\n    return '{$version}';\n}\n";
+    $root = create_isolated_project(['app/Probe.php' => $source('first_version')]);
+    $env = ['DDLESS_DEBUG_MODE' => 'true', 'DDLESS_DEBUG_SCOPE' => 'app'];
+    $body = <<<'BODY'
+$code = '';
+foreach ($GLOBALS['__DDLESS_INSTRUMENTED_CODE__'] as $path => $instrumented) {
+    if (substr(str_replace('\\', '/', $path), -13) === 'app/Probe.php') $code = $instrumented;
+}
+echo json_encode([
+    'first' => strpos($code, 'first_version') !== false,
+    'second' => strpos($code, 'second_version_longer') !== false,
+    'manifest' => is_file(ddless_get_manifest_path()),
+]);
+BODY;
+    try {
+        $firstRun = run_isolated_engine($root, $body, $env);
+        file_put_contents($root . '/app/Probe.php', $source('second_version_longer'));
+        $secondRun = run_isolated_engine($root, $body, $env);
+    } finally {
+        remove_isolated_project($root);
+    }
+
+    assert_true($firstRun['first'] && $firstRun['manifest'], 'first run instruments the file and writes the manifest');
+    assert_true($secondRun['second'], 'second run must serve the edited source');
+    assert_false($secondRun['first'], 'stale instrumented code was served from the cache');
+});

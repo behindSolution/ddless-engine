@@ -101,6 +101,32 @@ test('backslash paths normalized', function () {
     assert_true(ddless_is_vendor_path('C:\\project\\vendor\\autoload.php'));
 });
 
+section('ddless_instrument_trace_only() — string interpolation');
+
+test('trace instrumentation survives "${var}" interpolation', function () {
+    $code = <<<'PHP'
+<?php
+function greet($name) {
+    $s = "Hello ${name}!";
+    return $s;
+}
+PHP;
+    $result = ddless_instrument_trace_only($code, '/app/Greet.php', 'Greet.php');
+    assert_not_null($result);
+    try {
+        @token_get_all($result, TOKEN_PARSE);
+    } catch (\ParseError $e) {
+        throw new \RuntimeException('instrumented code no longer parses: ' . $e->getMessage());
+    }
+});
+
+section('ddless_is_vendor_path() — project folders named cache');
+
+test('a project folder named "cache" is not treated as vendor code', function () {
+    $path = str_replace('\\', '/', DDLESS_PROJECT_ROOT) . '/src/cache/UserRepository.php';
+    assert_false(ddless_is_vendor_path($path), 'step-in and trace skip this project file');
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }

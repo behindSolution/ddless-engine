@@ -628,6 +628,78 @@ test('a recorded loop produces one frame per iteration, end to end', function ()
     $resetTf();
 });
 
+section('Timeframe — pruning by start time');
+
+test('pruning keeps the newest recordings (run ids are "<pid>-<millis>")', function () {
+    $sessionId = 'ddless-test-timeframe-prune';
+    $previousSession = getenv('DDLESS_DEBUG_SESSION');
+    putenv("DDLESS_DEBUG_SESSION={$sessionId}");
+    $dir = ddless_tf_timeline_dir();
+    foreach (glob($dir . '/*.ndjson') ?: [] as $f) @unlink($f);
+
+    // 25 runs, each one millisecond-step newer than the last, with the PIDs a
+    // real machine produces: not ordered, and of different lengths.
+    $pids = [9876, 10234, 812, 45001, 7, 33210, 1200, 98, 5555, 20001, 431, 61000, 15, 7300, 2999,
+             88, 40404, 1001, 650, 31999, 4, 12000, 777, 50500, 3];
+    $byAge = [];
+    foreach ($pids as $i => $pid) {
+        $name = $pid . '-' . (1700000000000 + $i * 1000) . '.ndjson';
+        file_put_contents($dir . '/' . $name, "{}\n");
+        $byAge[] = $name;
+    }
+    $newest = array_slice($byAge, -20);
+
+    try {
+        ddless_tf_prune_old_runs(20);
+        $left = array_map('basename', glob($dir . '/*.ndjson') ?: []);
+    } finally {
+        foreach (glob($dir . '/*.ndjson') ?: [] as $f) @unlink($f);
+        @rmdir($dir);
+        @rmdir(dirname($dir));
+        putenv($previousSession === false ? 'DDLESS_DEBUG_SESSION' : "DDLESS_DEBUG_SESSION={$previousSession}");
+    }
+
+    $lost = array_values(array_diff($newest, $left));
+    assert_eq([], $lost, 'recent recordings were deleted while older ones survived');
+});
+
+section('Timeframe — object state in frames');
+
+test('timeline frames carry object state, not "[object Foo]"', function () {
+    $user = new \stdClass();
+    $user->name = 'Alice';
+    $captured = ddless_tf_capture_vars(['user' => $user]);
+    assert_true(
+        is_array($captured['user']) && str_contains(json_encode($captured['user']), 'Alice'),
+        'object recorded as ' . json_encode($captured['user'])
+    );
+});
+
+class TimeframeSerializableProbe implements \JsonSerializable
+{
+    public int $calls = 0;
+    public string $name = 'probe';
+
+    public function jsonSerialize(): array
+    {
+        $this->calls++;
+        return ['calls' => $this->calls];
+    }
+}
+
+test('recording a frame does not run user code (jsonSerialize)', function () {
+    $probe = new TimeframeSerializableProbe();
+    $captured = ddless_tf_capture_vars(['probe' => $probe]);
+    assert_eq(0, $probe->calls, 'jsonSerialize() calls made by the recorder');
+    assert_eq('probe', $captured['probe']['name'] ?? null, 'state still captured through reflection');
+});
+
+test('pausing at a breakpoint still uses jsonSerialize()', function () {
+    $probe = new TimeframeSerializableProbe();
+    $normalized = ddless_normalize_value($probe, 0);
+    assert_eq(['calls' => 1], $normalized);
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }

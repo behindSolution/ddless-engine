@@ -375,6 +375,33 @@ test('registry honors LIMIT and emits placeholder marker when full', function ()
 
 // ============================================================================
 
+class LazyDestructible
+{
+    public static bool $destructed = false;
+    public string $label = 'x';
+
+    public function __destruct()
+    {
+        self::$destructed = true;
+    }
+}
+
+section('Lazy registry — lifetime');
+
+test('objects shown at a breakpoint are released when execution resumes', function () {
+    LazyDestructible::$destructed = false;
+    with_debug_mode(function () {
+        $GLOBALS['__DDLESS_TERMINAL_HANDLER__'] = function () {
+            return 'continue';
+        };
+        $vars = ['resource' => new LazyDestructible()];
+        ddless_handle_breakpoint('/app/Hold.php', 3, 'Hold.php', $vars, []);
+        unset($vars);
+        assert_true(LazyDestructible::$destructed, '__destruct did not run: the lazy registry still holds the object');
+    });
+    ddless_lazy_reset();
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }

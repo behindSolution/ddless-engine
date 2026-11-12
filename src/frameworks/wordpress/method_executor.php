@@ -152,7 +152,7 @@ function ddless_serialize_value(mixed $value, int $depth = 0, int $maxDepth = 10
 
             foreach ($reflection->getProperties() as $prop) {
                 try {
-                    $prop->setAccessible(true);
+                    if (PHP_VERSION_ID < 80100) { $prop->setAccessible(true); }
                     if (!$prop->isInitialized($value)) {
                         continue;
                     }

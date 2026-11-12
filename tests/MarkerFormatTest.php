@@ -112,7 +112,6 @@ test('step_check emits logpoint line with expected keys', function () {
     $GLOBALS['__DDLESS_WATCH_LAST__'] = [];
     $GLOBALS['__DDLESS_WATCH_PREV_LOC__'] = null;
     $GLOBALS['__DDLESS_HIT_USER_BPS__'] = [];
-    $GLOBALS['__DDLESS_LOGPOINT_DEDUP__'] = [];
     $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false;
     $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null;
     $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null;
@@ -135,6 +134,22 @@ test('step_check emits logpoint line with expected keys', function () {
     assert_eq('app/TestFile.php', $payload['file']);
     assert_eq(20, $payload['line']);
     assert_contains($payload['message'], 'alice', 'message must interpolate variable');
+});
+
+test('a logpoint inside a loop emits one line per hit', function () {
+    $GLOBALS['__DDLESS_WATCHES__'] = [];
+    $GLOBALS['__DDLESS_STEP_IN_MODE__'] = false;
+    $GLOBALS['__DDLESS_STEP_OVER_FUNCTION__'] = null;
+    $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null;
+
+    $lines = capture_markers(function () {
+        for ($i = 0; $i < 5; $i++) {
+            ddless_step_check('/app/Loop.php', 8, 'app/Loop.php', true, '', ['i' => $i], [], 'processing', '', '', '');
+        }
+    });
+
+    $logLines = array_values(array_filter($lines, fn($l) => strpos($l, '__DDLESS_LOGPOINT__:') === 0));
+    assert_count(5, $logLines, 'identical messages emitted back to back must all be reported');
 });
 
 // ============================================================================

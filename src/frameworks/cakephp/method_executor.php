@@ -111,7 +111,7 @@ function ddless_serialize_value($value, int $depth = 0, int $maxDepth = 10, int 
             $ref = new \ReflectionClass($value);
             $props = $ref->getProperties();
             foreach ($props as $prop) {
-                $prop->setAccessible(true);
+                if (PHP_VERSION_ID < 80100) { $prop->setAccessible(true); }
                 if ($prop->isInitialized($value)) {
                     $result[$prop->getName()] = ddless_serialize_value($prop->getValue($value), $depth + 1, $maxDepth, $maxArrayItems);
                 }

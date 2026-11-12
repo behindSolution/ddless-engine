@@ -213,6 +213,45 @@ test('variable modification works with $this binding', function () {
     assert_eq('Alice', $vars['x']);
 });
 
+class EvalScopeParent
+{
+    private $secret = 'parent-private';
+    public $name = 'kb';
+}
+
+class EvalScopeChild extends EvalScopeParent
+{
+}
+
+class EvalScopeStatic
+{
+    private const SECRET = 'static-secret';
+}
+
+section('ddless_eval_in_context() — scope and variable isolation');
+
+test('user variable $returnValue is not shadowed by engine internals', function () {
+    $vars = ['returnValue' => 'user-value'];
+    assert_eq('user-value', ddless_eval_in_context('$returnValue', $vars, []));
+});
+
+test('user variable $evalCode is not shadowed by engine internals', function () {
+    $vars = ['evalCode' => 'user-code'];
+    assert_eq('user-code', ddless_eval_in_context('$evalCode', $vars, []));
+});
+
+test('$this->private works when paused in a method declared on the parent class', function () {
+    $vars = [];
+    $backtrace = [['function' => 'run', 'class' => 'EvalScopeParent', 'type' => '->', 'object' => new EvalScopeChild()]];
+    assert_eq('parent-private', ddless_eval_in_context('$this->secret', $vars, $backtrace));
+});
+
+test('self:: works when paused inside a static method', function () {
+    $vars = [];
+    $backtrace = [['function' => 'make', 'class' => 'EvalScopeStatic', 'type' => '::']];
+    assert_eq('static-secret', ddless_eval_in_context('self::SECRET', $vars, $backtrace));
+});
+
 // Print results if run standalone
 if (basename($argv[0] ?? '') === basename(__FILE__)) {
     exit(print_test_results());

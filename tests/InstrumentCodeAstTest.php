@@ -5,6 +5,21 @@
  */
 require_once __DIR__ . '/bootstrap.php';
 
+/** The original source that follows an injected step_check on the same line. */
+function instrumented_rest(string $line): string
+{
+    return explode('/* DDLESS_BP */', $line, 2)[1] ?? '';
+}
+
+/** True when the instrumented code carries a step_check for this source line. */
+function instrumented_has_step_check(?string $instrumented, int $line): bool
+{
+    if ($instrumented === null) {
+        return false;
+    }
+    return (bool) preg_match('/ddless_step_check\(\'[^\']*\', ' . $line . ', /', $instrumented);
+}
+
 section('ddless_instrument_code_with_ast()');
 
 test('injects step_check BEFORE statement lines', function () {
@@ -20,11 +35,12 @@ function foo() {
     $hasCheckBeforeAssign = false;
     $hasCheckBeforeReturn = false;
     for ($i = 0; $i < count($resultLines); $i++) {
-        if (str_contains($resultLines[$i], 'ddless_step_check') && str_contains($resultLines[$i], '// DDLESS_BP')) {
-            if (isset($resultLines[$i + 1]) && str_contains($resultLines[$i + 1], '$a = 1')) {
+        if (str_contains($resultLines[$i], 'ddless_step_check') && str_contains($resultLines[$i], '/* DDLESS_BP */')) {
+            $rest = instrumented_rest($resultLines[$i]);
+            if (str_contains($rest, '$a = 1')) {
                 $hasCheckBeforeAssign = true;
             }
-            if (isset($resultLines[$i + 1]) && str_contains($resultLines[$i + 1], 'return $a')) {
+            if (str_contains($rest, 'return $a')) {
                 $hasCheckBeforeReturn = true;
             }
         }
@@ -44,7 +60,7 @@ function foo($a, $b) {
 }';
     $result = ddless_instrument_code_with_ast($code, '/test/file.php', 'file.php');
     assert_not_null($result);
-    assert_contains($result, '!\\ddless_step_check(', 'elseif condition injection');
+    assert_contains($result, '!(\\ddless_step_gate(', 'elseif condition injection');
     assert_contains($result, '&& ($b)', 'original condition preserved');
 });
 
@@ -161,8 +177,8 @@ function foo(
 
     $resultLines = explode("\n", $result);
     foreach ($resultLines as $i => $line) {
-        if (str_contains($line, 'ddless_step_check') && str_contains($line, '// DDLESS_BP')) {
-            $nextTrimmed = trim($resultLines[$i + 1] ?? '');
+        if (str_contains($line, 'ddless_step_check') && str_contains($line, '/* DDLESS_BP */')) {
+            $nextTrimmed = trim(instrumented_rest($line));
             if ($nextTrimmed !== '') {
                 $firstChar = $nextTrimmed[0];
                 assert_true(
@@ -184,7 +200,7 @@ function foo() {
 
     $resultLines = explode("\n", $result);
     foreach ($resultLines as $line) {
-        if (str_contains($line, 'ddless_step_check') && str_contains($line, '// DDLESS_BP')) {
+        if (str_contains($line, 'ddless_step_check') && str_contains($line, '/* DDLESS_BP */')) {
             preg_match('/^(\s*)/', $line, $m);
             assert_eq('        ', $m[1], 'indentation should match original line');
             break;
@@ -250,7 +266,7 @@ function foo($x) {
     $result = ddless_instrument_code_with_ast($code, '/test/file.php', 'file.php');
     assert_not_null($result);
 
-    $elseifCount = substr_count($result, '!\\ddless_step_check(');
+    $elseifCount = substr_count($result, '!(\\ddless_step_gate(');
     assert_eq(2, $elseifCount, 'two elseif conditions should be injected');
 });
 
@@ -265,8 +281,8 @@ function foo() {
 
     $resultLines = explode("\n", $result);
     foreach ($resultLines as $i => $line) {
-        if (str_contains($line, 'ddless_step_check') && str_contains($line, '// DDLESS_BP')) {
-            $nextLine = $resultLines[$i + 1] ?? '';
+        if (str_contains($line, 'ddless_step_check') && str_contains($line, '/* DDLESS_BP */')) {
+            $nextLine = instrumented_rest($line);
             if (str_contains($nextLine, '$a = 1')) {
                 assert_contains($line, ', true,', 'line 3 should be isUserBp=true');
             }
@@ -294,7 +310,7 @@ function foo($a) {
     assert_true(is_array($tokens), 'instrumented code should tokenize without error');
 
     // The if condition should have step_check injected (like elseif pattern)
-    assert_contains($result, '!\\ddless_step_check(', 'step_check in braceless if condition');
+    assert_contains($result, '!(\\ddless_step_gate(', 'step_check in braceless if condition');
     assert_contains($result, '&& (', 'original condition wrapped');
 
     // Body lines ($a = false / $a = true) should NOT have step_check
@@ -318,7 +334,7 @@ function foo($items) {
     $result = ddless_instrument_code_with_ast($code, '/test/file.php', 'file.php');
     assert_not_null($result);
 
-    assert_contains($result, '!\\ddless_step_check(', 'step_check in braceless while condition');
+    assert_contains($result, '!(\\ddless_step_gate(', 'step_check in braceless while condition');
 
     $resultLines = explode("\n", $result);
     foreach ($resultLines as $line) {
@@ -343,8 +359,8 @@ function foo($a) {
     $resultLines = explode("\n", $result);
     $hasCheckBeforeIf = false;
     for ($i = 0; $i < count($resultLines); $i++) {
-        if (str_contains($resultLines[$i], 'ddless_step_check') && str_contains($resultLines[$i], '// DDLESS_BP')) {
-            if (isset($resultLines[$i + 1]) && str_contains($resultLines[$i + 1], 'if ($a) {')) {
+        if (str_contains($resultLines[$i], 'ddless_step_check') && str_contains($resultLines[$i], '/* DDLESS_BP */')) {
+            if (str_contains(instrumented_rest($resultLines[$i]), 'if ($a) {')) {
                 $hasCheckBeforeIf = true;
             }
         }
@@ -367,7 +383,7 @@ function foo($did_just_catch) {
     $resultLines = explode("\n", $result);
     foreach ($resultLines as $line) {
         if (str_contains($line, '$did_just_catch')) {
-            assert_not_contains($line, '!\\ddless_step_check(',
+            assert_not_contains($line, '!(\\ddless_step_gate(',
                 'braced if with comment should NOT get condition injection');
             break;
         }
@@ -547,8 +563,8 @@ function translate($key) {
     // Lines starting with case should NOT have step_check before them
     $resultLines = explode("\n", $result);
     for ($i = 0; $i < count($resultLines); $i++) {
-        if (str_contains($resultLines[$i], 'ddless_step_check') && str_contains($resultLines[$i], '// DDLESS_BP')) {
-            $next = trim($resultLines[$i + 1] ?? '');
+        if (str_contains($resultLines[$i], 'ddless_step_check') && str_contains($resultLines[$i], '/* DDLESS_BP */')) {
+            $next = trim(instrumented_rest($resultLines[$i]));
             assert_true(
                 !preg_match('/^case\s/', $next) && !preg_match('/^default\s*:/', $next),
                 'step_check must not precede a case/default line: ' . $next
@@ -564,6 +580,166 @@ function translate($key) {
     exec('php -l ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
     @unlink($tmpFile);
     assert_eq(0, $exitCode, 'inline case/return must be valid PHP: ' . implode("\n", $output));
+});
+
+section('ddless_instrument_code_with_ast() — comments and multi-line headers');
+
+test('statement below a comment ending in ")" is instrumented', function () {
+    $code = <<<'PHP'
+<?php
+function total_with_comment() {
+    // Calculate total (with tax)
+    $total = 1 + 2;
+    return $total;
+}
+PHP;
+    $result = ddless_instrument_code_with_ast($code, '/app/Total.php', 'Total.php', [4]);
+    assert_true(instrumented_has_step_check($result, 4), 'line 4 has a user breakpoint but got no step_check');
+});
+
+test('multi-line "if (" condition (PSR-12) is instrumented', function () {
+    $code = <<<'PHP'
+<?php
+function multiline_if($x) {
+    if (
+        $x > 1
+    ) {
+        $x++;
+    }
+    return $x;
+}
+PHP;
+    $result = ddless_instrument_code_with_ast($code, '/app/Multi.php', 'Multi.php', [3]);
+    assert_true(instrumented_has_step_check($result, 3), 'breakpoint on the "if (" line got no step_check');
+});
+
+test('multi-line "foreach (" header is instrumented', function () {
+    $code = <<<'PHP'
+<?php
+function multiline_foreach($items) {
+    foreach (
+        $items as $item
+    ) {
+        echo $item;
+    }
+}
+PHP;
+    $result = ddless_instrument_code_with_ast($code, '/app/Each.php', 'Each.php', [3]);
+    assert_true(instrumented_has_step_check($result, 3), 'breakpoint on the "foreach (" line got no step_check');
+});
+
+section('ddless_instrument_code_with_ast() — line numbers are preserved');
+
+test('instrumentation keeps every source line on its original line number', function () {
+    $code = <<<'PHP'
+<?php
+function lines_fixture() {
+    $a = 1;
+    $b = 2;
+    return lines_helper($a + $b);
+}
+function lines_helper($v) {
+    return $v * 2;
+}
+PHP;
+    $result = ddless_instrument_code_with_ast($code, '/app/Lines.php', 'Lines.php', [3]);
+    assert_not_null($result);
+    $original = explode("\n", $code);
+    $instrumented = explode("\n", $result);
+    assert_eq(count($original), count($instrumented), 'line count changed (stack traces, exceptions and __LINE__ shift)');
+});
+
+test('an exception thrown in instrumented code reports the real line', function () {
+    $code = <<<'PHP'
+<?php
+function instrumented_thrower() {
+    $a = 1;
+    $b = 2;
+    throw new \RuntimeException('boom');
+}
+PHP;
+    $result = ddless_instrument_code_with_ast($code, '/app/Thrower.php', 'Thrower.php', []);
+    assert_not_null($result);
+    eval(preg_replace('/<\?php/', '', $result, 1));
+    try {
+        instrumented_thrower();
+        throw new \LogicException('instrumented_thrower() should have thrown');
+    } catch (\RuntimeException $e) {
+        assert_eq(5, $e->getLine(), 'exception line');
+    }
+});
+
+section('ddless_instrument_code_with_ast() — breakpoints always land');
+
+test('breakpoint on the body of a braceless if lands on the if', function () {
+    $code = <<<'CODE'
+<?php
+function braceless_body($x) {
+    $y = 1;
+    if ($x)
+        $y = 2;
+    return $y;
+}
+CODE;
+    $result = ddless_instrument_code_with_ast($code, '/app/Body.php', 'Body.php', [5]);
+    $lines = explode("\n", $result);
+    assert_not_contains($lines[4], 'ddless_step_check', 'the body itself cannot take a statement');
+    assert_contains($lines[3], "'Body.php', true", 'the breakpoint moved to the if on line 4');
+    assert_contains($lines[2], "'Body.php', false", 'unrelated lines are not breakpoints');
+});
+
+test('breakpoint on a "case x: statement" line lands on the line above', function () {
+    $code = <<<'CODE'
+<?php
+function inline_case($key) {
+    switch ($key) {
+        case 'yes': return true;
+    }
+    return false;
+}
+CODE;
+    $result = ddless_instrument_code_with_ast($code, '/app/Case.php', 'Case.php', [4]);
+    $lines = explode("\n", $result);
+    assert_not_contains($lines[3], 'ddless_step_check', 'nothing can be injected before a case label');
+    assert_contains($lines[2], "'Case.php', true", 'the breakpoint moved to the switch on line 3');
+});
+
+test('condition and logpoint of a moved breakpoint follow it', function () {
+    $code = <<<'CODE'
+<?php
+function moved_settings($x) {
+    if ($x)
+        return 1;
+    return 0;
+}
+CODE;
+    $result = ddless_instrument_code_with_ast(
+        $code, '/app/Moved.php', 'Moved.php',
+        [4],
+        [4 => '$x > 10'],
+        [4 => 'x is {$x}']
+    );
+    $lines = explode("\n", $result);
+    assert_contains($lines[2], '$x > 10', 'condition applied where the breakpoint landed');
+    assert_contains($lines[2], 'x is {$x}', 'logpoint applied where the breakpoint landed');
+});
+
+test('breakpoint on else is still injected inside the else block', function () {
+    $code = <<<'CODE'
+<?php
+function else_block($x) {
+    if ($x) {
+        $y = 1;
+    } else {
+        $y = 2;
+    }
+    return $y;
+}
+CODE;
+    $withBp = explode("\n", ddless_instrument_code_with_ast($code, '/app/Else.php', 'Else.php', [5]));
+    assert_contains($withBp[4], "'Else.php', true", 'breakpoint on the else line');
+    $withoutBp = explode("\n", ddless_instrument_code_with_ast($code, '/app/Else.php', 'Else.php', []));
+    assert_not_contains($withoutBp[4], 'ddless_step_check', 'else is not a stepping stop on its own');
 });
 
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {

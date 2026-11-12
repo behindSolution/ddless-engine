@@ -144,6 +144,26 @@ test('resetAllStepModes clears step-out target', function () {
     assert_null($GLOBALS['__DDLESS_STEP_OUT_TARGET__'], 'step-out target should be cleared');
 });
 
+section('Step-out: recursion');
+
+test('step out of a recursive call does not stop inside the same invocation', function () {
+    $pauses = 0;
+    with_debug_mode(function () use (&$pauses) {
+        $commands = ['step_out', 'continue', 'continue'];
+        $GLOBALS['__DDLESS_TERMINAL_HANDLER__'] = function () use (&$pauses, &$commands) {
+            $pauses++;
+            return array_shift($commands) ?? 'continue';
+        };
+        $inner = [['function' => 'factorial'], ['function' => 'factorial'], ['function' => 'main']];
+
+        // Paused on a breakpoint in the inner factorial(); user presses Step Out.
+        ddless_step_check('/app/Fact.php', 4, 'Fact.php', true, '', [], $inner);
+        // Next line of that SAME inner invocation: we have not returned yet.
+        ddless_step_check('/app/Fact.php', 5, 'Fact.php', false, '', [], $inner);
+    });
+    assert_eq(1, $pauses, 'Step Out stopped on the very next line instead of the caller');
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }

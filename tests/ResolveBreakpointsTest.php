@@ -68,6 +68,24 @@ test('BP resolves to closest line, not first', function () {
     assert_true($result[5]['isUserBp'], 'should resolve to line 5 (closest before 7)');
 });
 
+section('ddless_resolve_user_breakpoint_targets()');
+
+test('a breakpoint on an injectable line targets itself', function () {
+    assert_eq([5 => 5], ddless_resolve_user_breakpoint_targets([3, 5, 9], [5]));
+});
+
+test('a breakpoint on another line targets the nearest injectable line above', function () {
+    assert_eq([7 => 5, 20 => 9], ddless_resolve_user_breakpoint_targets([9, 3, 5], [7, 20]));
+});
+
+test('a breakpoint above every injectable line has no target', function () {
+    assert_eq([], ddless_resolve_user_breakpoint_targets([10, 12], [4]));
+});
+
+test('several breakpoints can share one target', function () {
+    assert_eq([6 => 5, 7 => 5], ddless_resolve_user_breakpoint_targets([5, 10], [6, 7]));
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }

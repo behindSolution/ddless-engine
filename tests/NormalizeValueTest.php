@@ -90,6 +90,13 @@ test('plain objects without serialization hooks become lazy markers', function (
     assert_eq('stdClass', $result['class']);
 });
 
+section('ddless_normalize_value() — large arrays');
+
+test('huge arrays are truncated instead of serialized whole', function () {
+    $normalized = ddless_normalize_value(range(1, 50000), 0);
+    assert_true(count($normalized) < 50000, 'all ' . count($normalized) . ' elements were serialized');
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }
