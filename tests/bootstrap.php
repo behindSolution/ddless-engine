@@ -366,7 +366,9 @@ function run_isolated_engine(string $root, string $body, array $env = [])
         . "});\n"
         . "\$__before = array_keys(get_defined_vars());\n"
         . "require " . var_export($root . '/.ddless/debug.php', true) . ";\n"
-        . "\$__leaked = array_values(array_diff(array_keys(get_defined_vars()), \$__before, ['__before']));\n"
+        // Superglobals are PHP's own: before 8.1, GLOBALS shows up in
+        // get_defined_vars() as soon as anything reads it.
+        . "\$__leaked = array_values(array_diff(array_keys(get_defined_vars()), \$__before, ['__before', 'GLOBALS', '_SERVER', '_GET', '_POST', '_COOKIE', '_FILES', '_ENV', '_REQUEST', '_SESSION']));\n"
         . $body . "\n");
 
     $environment = array_merge(getenv(), [
