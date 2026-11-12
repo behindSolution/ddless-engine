@@ -67,6 +67,23 @@ if (json_last_error() !== JSON_ERROR_NONE) {
 
 $GLOBALS['__DDLESS_TASK_INPUT__'] = $inputJson;
 
+// Lets the app stop this exact process: under docker exec, wsl or ssh, killing
+// the wrapper on the host does not reach the PHP process.
+$__ddless_run_id = $input['runId'] ?? null;
+if (is_string($__ddless_run_id) && preg_match('/^[A-Za-z0-9_-]{1,64}$/', $__ddless_run_id)) {
+    foreach (glob(__DIR__ . '/task_*.pid') ?: [] as $__ddless_stale_pid) {
+        if (@filemtime($__ddless_stale_pid) < time() - 86400) {
+            @unlink($__ddless_stale_pid);
+        }
+    }
+    $__ddless_pid_file = __DIR__ . '/task_' . $__ddless_run_id . '.pid';
+    if (@file_put_contents($__ddless_pid_file, (string) getmypid()) !== false) {
+        register_shutdown_function(static function () use ($__ddless_pid_file): void {
+            @unlink($__ddless_pid_file);
+        });
+    }
+}
+
 $framework = $input['framework'] ?? 'laravel';
 $runnerPath = __DIR__ . '/frameworks/' . $framework . '/task_runner.php';
 

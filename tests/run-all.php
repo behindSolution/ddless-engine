@@ -29,6 +29,8 @@ $testFiles = [
     'WatchHistoryTest.php',
     'MarkerFormatTest.php',
     'TaskEmitCapTest.php',
+    'TaskPromptTest.php',
+    'TaskTriggerTest.php',
     'LazyExpandTest.php',
     'TimeframeTest.php',
     'StreamWrapperTest.php',

@@ -21,6 +21,26 @@ if (getenv('DDLESS_DEBUG_MODE') === 'true') {
     require_once __DIR__ . '/debug.php';
 }
 
+/**
+ * Rebuild $_POST from the ordered multipart text fields the way PHP itself
+ * would: `tags[]` twice becomes an array, `user[name]` a nested array.
+ */
+function ddless_form_parameters_from_pairs(array $pairs): array
+{
+    $query = [];
+    foreach ($pairs as $pair) {
+        if (!is_array($pair) || !isset($pair[0]) || !is_string($pair[0]) || $pair[0] === '') {
+            continue;
+        }
+        $value = $pair[1] ?? '';
+        $query[] = urlencode($pair[0]) . '=' . urlencode(is_scalar($value) ? (string) $value : '');
+    }
+
+    $parsed = [];
+    parse_str(implode('&', $query), $parsed);
+    return $parsed;
+}
+
 $payloadPath = getenv('DDLESS_PAYLOAD') ?: null;
 $payloadContent = null;
 
@@ -153,7 +173,9 @@ if ($contentType !== null && stripos($contentType, 'application/x-www-form-urlen
             $rawBody = json_encode($decodedBody);
         }
     } else {
-        $formParameters = $decodedBody;
+        $formParameters = (isset($payload['formPairs']) && is_array($payload['formPairs']))
+            ? ddless_form_parameters_from_pairs($payload['formPairs'])
+            : $decodedBody;
         if ($rawBody === null || $rawBody === '') {
             $rawBody = json_encode($decodedBody);
         }

@@ -93,6 +93,40 @@ test('returns null on parse error', function () use ($resetTaskBp, $setBp) {
     $resetTaskBp();
 });
 
+section('ddless_task_instrument_eval_code() — scratchpad without an open tag');
+
+test('code without <?php is still instrumented, on its own line numbers', function () use ($resetTaskBp, $setBp) {
+    $setBp([2]);
+    $result = ddless_task_instrument_eval_code("\$total = 0;\n\$total += 5;\nreturn \$total;\n");
+    assert_not_null($result, 'breakpoints must work even when the buffer has no <?php');
+    $lines = explode("\n", $result);
+    assert_contains($lines[0], "'__taskrunner__.php', false", 'line 1 instrumented, not a breakpoint');
+    assert_contains($lines[1], "'__taskrunner__.php', true", 'breakpoint stays on editor line 2');
+    assert_not_contains($result, '<?php', 'open tag must not reach eval()');
+    assert_eq(5, eval($result));
+    $resetTaskBp();
+});
+
+section('ddless_task_editor_line()');
+
+test('instrumented code reports the editor line as is', function () {
+    assert_eq(7, ddless_task_editor_line(7, true, "<?php\n\n\$x = 1;\n", ''));
+});
+
+test('uninstrumented code is offset by the import prefix and the stripped open tag', function () {
+    $userCode = "<?php\n\n\$x = 1;\nthrow new Exception('boom');\n";
+    assert_eq(4, ddless_task_editor_line(3, false, $userCode, ''), 'no imports: eval line 3 is editor line 4');
+    assert_eq(4, ddless_task_editor_line(5, false, $userCode, "use A;\nuse B;\n"), 'two imports shift the eval line by two more');
+});
+
+test('uninstrumented code without an open tag only loses the prefix line', function () {
+    assert_eq(2, ddless_task_editor_line(3, false, "\$x = 1;\nthrow new Exception('boom');\n", ''));
+});
+
+test('the reported line never goes below 1', function () {
+    assert_eq(1, ddless_task_editor_line(1, false, "<?php \$x = 1;", "use A;\n"));
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }

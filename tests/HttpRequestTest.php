@@ -573,6 +573,40 @@ test('default content type is application/octet-stream', function () {
 // Standalone run
 // ============================================================================
 
+section('$_POST reconstruction from multipart text fields (formPairs)');
+
+// http_trigger.php is a script, so the function is lifted out of it.
+if (!function_exists('ddless_form_parameters_from_pairs')) {
+    $triggerSource = file_get_contents(dirname($GLOBALS['debugPhpPath']) . '/http_trigger.php');
+    if (!preg_match('/function\s+ddless_form_parameters_from_pairs\b.*?\n}\n/s', $triggerSource, $m)) {
+        throw new RuntimeException('ddless_form_parameters_from_pairs not found in http_trigger.php');
+    }
+    eval($m[0]);
+}
+
+test('repeated name[] fields become an array', function () {
+    $post = ddless_form_parameters_from_pairs([['tags[]', 'a'], ['tags[]', 'b'], ['title', 'Hello']]);
+    assert_eq(['tags' => ['a', 'b'], 'title' => 'Hello'], $post);
+});
+
+test('name[key] fields become a nested array', function () {
+    $post = ddless_form_parameters_from_pairs([['user[name]', 'Ana'], ['user[address][city]', 'São Paulo']]);
+    assert_eq(['user' => ['name' => 'Ana', 'address' => ['city' => 'São Paulo']]], $post);
+});
+
+test('values with &, =, + and % survive untouched', function () {
+    $post = ddless_form_parameters_from_pairs([['q', 'a&b=c+d 100%'], ['token', 'abc+/=']]);
+    assert_eq(['q' => 'a&b=c+d 100%', 'token' => 'abc+/='], $post);
+});
+
+test('a repeated plain name keeps the last value, like PHP', function () {
+    assert_eq(['a' => '2'], ddless_form_parameters_from_pairs([['a', '1'], ['a', '2']]));
+});
+
+test('malformed pairs are ignored', function () {
+    assert_eq(['ok' => '1'], ddless_form_parameters_from_pairs([['', 'x'], 'nope', [null, 'y'], ['ok', '1']]));
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }

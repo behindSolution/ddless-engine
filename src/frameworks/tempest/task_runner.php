@@ -109,7 +109,11 @@ function ddless_prompt_with_rule(string $promptType, string $message, array $ext
             $input = $replayed;
         } else {
             ddless_task_emit('prompt', $data);
-            $input = trim((string)fgets(STDIN));
+            $rawInput = fgets(STDIN);
+            if ($rawInput === false) {
+                throw new \RuntimeException('Input stream closed while waiting for an answer to: ' . $message);
+            }
+            $input = trim($rawInput);
             if (function_exists('ddless_tf_journal_input')) {
                 ddless_tf_journal_input($input);
             }
@@ -572,6 +576,9 @@ try {
         if (getenv('DDLESS_DEBUG_MODE') !== 'true') {
             $prefixLines = substr_count($useStatements, "\n") + 1;
             $errorData['line'] = max(1, $e->getLine() - $prefixLines);
+        } elseif (function_exists('ddless_task_editor_line')) {
+            $errorData['line'] = ddless_task_editor_line($e->getLine(), isset($__ddlessDebugEval) && $__ddlessDebugEval !== null, $userCode, $useStatements);
+            $errorData['lineIsEditor'] = true;
         }
         ddless_task_emit('error', $errorData);
         ddless_task_done(false, $taskStartTime, $e->getMessage());

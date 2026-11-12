@@ -1290,6 +1290,10 @@ function ddless_task_instrument_eval_code(string $userCode): ?string
         $GLOBALS['__DDLESS_USER_BP_LINES__'][$virtualAbs . ':' . $line] = true;
     }
 
+    if (!preg_match('/^\s*<\?php\b/i', $userCode)) {
+        $userCode = '<?php ' . $userCode;
+    }
+
     $instrumented = ddless_instrument_code_with_ast(
         $userCode,
         $virtualAbs,
@@ -1309,6 +1313,24 @@ function ddless_task_instrument_eval_code(string $userCode): ?string
     $evalReady = preg_replace('/<\?php/i', '     ', $instrumented, 1);
     $evalReady = preg_replace('/\?>\s*$/', '', $evalReady);
     return $evalReady;
+}
+
+/**
+ * Editor line of an error raised by the Task Runner scratchpad in debug mode.
+ * Instrumented code keeps the editor's line numbers; code that ran without
+ * instrumentation is offset by the import prefix and the stripped open tag.
+ */
+function ddless_task_editor_line(int $evalLine, bool $instrumented, string $userCode, string $useStatements): int
+{
+    if ($instrumented) {
+        return max(1, $evalLine);
+    }
+
+    preg_match('/^\s*(?:<\?php\s*)?(?:<\?=?\s*)?/i', $userCode, $head);
+    $strippedHeadLines = substr_count($head[0] ?? '', "\n");
+    $prefixLines = substr_count($useStatements, "\n") + 1;
+
+    return max(1, $evalLine - $prefixLines + $strippedHeadLines);
 }
 
 function ddless_get_current_function_info(array $backtrace): array
