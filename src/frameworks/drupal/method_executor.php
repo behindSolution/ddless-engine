@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Drupal 9/10/11 method executor. Boots the DrupalKernel and container,
  * then executes methods/functions with service injection support.

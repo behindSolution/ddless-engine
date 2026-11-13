@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * WordPress task runner. Boots WordPress via wp-load.php so all
  * plugins, themes, hooks, and core functions are available, then

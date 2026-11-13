@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Router script for `php -S` built-in server. Used when debugging via SSH
  * with a real browser (sessions, cookies persist naturally).

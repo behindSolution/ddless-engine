@@ -39,10 +39,12 @@ Each step validates a layer. If one fails, you know exactly where to look.
 Validates breakpoints, stepping, and variable inspection:
 
 ```bash
-php src/playground/test_trigger.php --code '$x = 1; $y = 2; echo $x + $y;' --bp 2
+php src/playground/test_trigger.php --code '$x = 1; $y = 2; echo $x + $y;' --bp 1
 ```
 
-With a framework, create `boot.php` and a test file:
+At the prompt: `c` continue, `n` next, `s` step in, `o` step out, `v` variables, `q` quit.
+
+With a framework, create `boot.php` and a test file in the root of your clone:
 
 ```php
 // boot.php — boots the framework (runs without stream wrapper)
@@ -123,7 +125,7 @@ See `src/playground/README.md` for all options and protocols.
 
 ## Adding a framework
 
-To add support for a new framework (e.g. CakePHP), create `src/frameworks/cakephp/` with:
+To add support for a new framework (e.g. Phalcon), create `src/frameworks/phalcon/` with:
 
 | File | Purpose |
 |------|---------|

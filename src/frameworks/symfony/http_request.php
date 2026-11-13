@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Symfony HTTP request handler. Bootstraps the Symfony application kernel,
  * processes the captured HTTP request through the full middleware/event pipeline,

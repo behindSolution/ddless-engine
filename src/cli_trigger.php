@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * CLI debug entry point. Loaded via auto_prepend_file to enable debugging
  * of PHP scripts executed from the terminal. Reconstructs $argv/$argc,

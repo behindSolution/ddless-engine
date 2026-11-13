@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Tempest HTTP request handler. Bootstraps the Tempest application container,
  * dispatches the captured HTTP request through the router pipeline,

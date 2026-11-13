@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Laravel task runner. Bootstraps the Laravel application and executes
  * user-written code as an Artisan command with output methods (info, warn,

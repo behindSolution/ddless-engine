@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Engine test runner. Runs a PHP script or inline code with breakpoints
  * and interactive stepping. Validates the core debug engine (instrumentation,
@@ -63,7 +63,7 @@ while ($i < count($args)) {
     php test_trigger.php --boot <bootstrap.php> --file <script.php> [--bp <line>]
 
   Options:
-    --file, -f <path>    PHP file to debug (relative to project root)
+    --file, -f <path>    PHP file to debug (relative to the current directory or the project root)
     --code, -c <code>    Inline PHP code to debug (without <?php tag)
     --boot  <path>       Bootstrap file to require before running (boots framework)
     --bp,   -b <spec>    Breakpoint: line number or file.php:line (repeatable)
@@ -75,6 +75,7 @@ while ($i < count($args)) {
     [n] next         Step over (next line in same function)
     [s] step         Step into (enter function calls)
     [o] out          Step out (return to caller)
+    [v] vars         Toggle between the source view and the variables in scope
     [q] quit         Stop execution
 
 HELP);
@@ -116,11 +117,7 @@ if ($opts['code'] !== null) {
     }, $opts['bp']);
 } else {
     $filePath = $opts['file'];
-    if (!str_starts_with($filePath, '/') && !preg_match('/^[A-Za-z]:/', $filePath)) {
-        $scriptPath = $projectRoot . DIRECTORY_SEPARATOR . $filePath;
-    } else {
-        $scriptPath = $filePath;
-    }
+    $scriptPath = ddless_playground_resolve_path($filePath, $projectRoot);
     if (!is_file($scriptPath)) {
         fwrite(STDERR, CLR_RED . "Error: File not found: {$scriptPath}" . CLR_RESET . "\n");
         exit(1);
@@ -181,9 +178,7 @@ try {
     // Boot framework if --boot was provided (BEFORE engine, so autoload works)
     if ($opts['boot'] !== null) {
         $bootPath = $opts['boot'];
-        if (!str_starts_with($bootPath, '/') && !preg_match('/^[A-Za-z]:/', $bootPath)) {
-            $bootPath = $projectRoot . DIRECTORY_SEPARATOR . $bootPath;
-        }
+        $bootPath = ddless_playground_resolve_path($bootPath, $projectRoot);
         if (!is_file($bootPath)) {
             fwrite(STDERR, CLR_RED . "  Error: Boot file not found: {$bootPath}" . CLR_RESET . "\n");
             exit(1);

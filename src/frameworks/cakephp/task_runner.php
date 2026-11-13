@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * CakePHP 4/5 task runner. Boots the CakePHP application and executes
  * user-provided PHP code with access to models, services, and helpers.

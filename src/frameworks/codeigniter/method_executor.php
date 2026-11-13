@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * CodeIgniter 4 method executor. Boots the CI4 application, resolves services,
  * and executes a single method/function with dependency injection support.

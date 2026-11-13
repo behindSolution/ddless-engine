@@ -3,12 +3,28 @@
 Test suite for validating the debug engine and framework integrations from the terminal,
 without the Electron app.
 
+Commands below are run from the root of your `ddless-engine` clone, which should live
+inside a real PHP project (next to its `composer.json`) for the framework steps:
+
+```
+/var/www/html/                  ← project root (has composer.json)
+├── app/
+├── vendor/
+└── ddless-engine/              ← your clone (run commands here)
+    └── src/
+        ├── debug.php
+        ├── frameworks/
+        └── playground/
+```
+
+Step 1a needs no project at all: it runs on a bare clone.
+
 ## Adding a New Framework
 
 To add support for a new framework (e.g. CakePHP), create a directory at:
 
 ```
-.ddless/frameworks/cakephp/
+src/frameworks/cakephp/
 ```
 
 With up to three handler files:
@@ -86,7 +102,7 @@ This is the first test a contributor should run when adding a new framework.
 #### 1a. Quick sanity check (no framework)
 
 ```bash
-php playground/test_trigger.php --code '$x = 1; $y = 2; $z = $x + $y; echo $z;' --bp 2
+php src/playground/test_trigger.php --code '$x = 1; $y = 2; $z = $x + $y; echo $z;' --bp 2
 ```
 
 If this works, the core debug engine is functional.
@@ -97,7 +113,7 @@ Use `--boot` to boot your framework before running the target script. The boot
 runs **without** the stream wrapper, so the framework loads cleanly. Then the
 debug engine is loaded and your test script runs with breakpoints active.
 
-**Create two files inside the ddless-engine directory (`.ddless/`):**
+**Create two files in the root of your ddless-engine clone:**
 
 `boot.php` — boots the framework:
 
@@ -113,8 +129,11 @@ $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
 > **Important:** `DDLESS_PROJECT_ROOT` must point to the actual project root so
 > that breakpoint paths like `app/Services/OrderService.php:38` resolve correctly.
-> Paths use `__DIR__ . '/../'` because the files live inside `.ddless/`, one level
-> below the project root.
+> Paths use `__DIR__ . '/../'` because the files live in your ddless-engine clone,
+> one level below the project root.
+>
+> `--boot` and `--file` accept paths relative to the current directory or to the
+> project root.
 
 `test_orders.php` — what you want to test:
 
@@ -129,7 +148,7 @@ var_dump($result);
 **Run with breakpoints inside the service:**
 
 ```bash
-php playground/test_trigger.php --boot boot.php --file test_orders.php \
+php src/playground/test_trigger.php --boot boot.php --file test_orders.php \
   --bp app/Services/OrderService.php:38
 ```
 
@@ -149,6 +168,7 @@ the framework boots — and you can replicate that in `method_executor.php`,
 - `n` — step over (next line)
 - `s` — step into function
 - `o` — step out of function
+- `v` — toggle between the source view and the variables in scope (objects are shown expanded)
 - `q` — quit
 
 **What to verify:**
@@ -165,25 +185,25 @@ a class and call a method with parameters.
 
 ```bash
 # Call a method (framework resolves from container)
-php playground/test_trigger.php --test method --framework cakephp \
+php src/playground/test_trigger.php --test method --framework cakephp \
   --class "App\Services\OrderService" --method calculate
 
 # With method parameters (PHP file that returns an array)
-php playground/test_trigger.php --test method --framework cakephp \
+php src/playground/test_trigger.php --test method --framework cakephp \
   --class "App\Services\OrderService" --method calculate \
   --params-file test_params.php
 
 # With constructor parameters
-php playground/test_trigger.php --test method --framework cakephp \
+php src/playground/test_trigger.php --test method --framework cakephp \
   --class "App\Services\PriceCalculator" --method getTotal \
   --ctor-file test_ctor.php --params-file test_params.php
 
 # Call a global function (empty class)
-php playground/test_trigger.php --test method --framework cakephp \
+php src/playground/test_trigger.php --test method --framework cakephp \
   --class "" --method array_sum --params-file test_params.php
 
 # With breakpoints inside the method
-php playground/test_trigger.php --test method --framework cakephp \
+php src/playground/test_trigger.php --test method --framework cakephp \
   --class "App\Services\OrderService" --method calculate \
   --bp app/Services/OrderService.php:45
 ```
@@ -216,16 +236,16 @@ framework context (models, services, helpers).
 
 ```bash
 # Inline code
-php playground/test_trigger.php --test task --framework cakephp \
+php src/playground/test_trigger.php --test task --framework cakephp \
   -c '$this->info("Hello from CakePHP!");'
 
 # With imports
-php playground/test_trigger.php --test task --framework cakephp \
+php src/playground/test_trigger.php --test task --framework cakephp \
   -c '$this->info("Users: " . UsersTable::find()->count());' \
   -u "App\Model\Table\UsersTable"
 
 # From a file
-php playground/test_trigger.php --test task --framework cakephp \
+php src/playground/test_trigger.php --test task --framework cakephp \
   --file my_task.php
 ```
 
@@ -245,21 +265,21 @@ the full framework pipeline using PHP's built-in server.
 
 ```bash
 # Basic
-DDLESS_FRAMEWORK=cakephp php -S localhost:8080 playground/test_trigger.php
+DDLESS_FRAMEWORK=cakephp php -S localhost:8080 src/playground/test_trigger.php
 
 # With breakpoints (use relative path from project root to avoid ambiguity)
 DDLESS_FRAMEWORK=cakephp DDLESS_BP="app/Controllers/OrdersController.php:45,app/Services/OrderService.php:32" \
-  php -S localhost:8080 playground/test_trigger.php
+  php -S localhost:8080 src/playground/test_trigger.php
 
 # With deeper variable inspection
 DDLESS_FRAMEWORK=cakephp DDLESS_BP="app/Controllers/OrdersController.php:45" DDLESS_DEPTH=6 \
-  php -S localhost:8080 playground/test_trigger.php
+  php -S localhost:8080 src/playground/test_trigger.php
 ```
 
 On Windows PowerShell:
 
 ```powershell
-$env:DDLESS_FRAMEWORK="cakephp"; $env:DDLESS_BP="app/Controllers/OrdersController.php:45"; php -S localhost:8080 playground/test_trigger.php
+$env:DDLESS_FRAMEWORK="cakephp"; $env:DDLESS_BP="app/Controllers/OrdersController.php:45"; php -S localhost:8080 src/playground/test_trigger.php
 ```
 
 **Terminal 2** — send requests:
@@ -303,7 +323,7 @@ curl http://localhost:8080/api/orders -H "Authorization: Bearer token123"
 ## File Structure
 
 ```
-playground/
+src/playground/
   test_trigger.php    Entry point / router
   terminal_ui.php     Shared utilities (colors, breakpoint handler, session)
   engine_test.php     Debug engine test (plain PHP)
@@ -318,7 +338,7 @@ playground/
 Each test mode has a `--help` flag:
 
 ```bash
-php playground/test_trigger.php --help
-php playground/test_trigger.php --test method --help
-php playground/test_trigger.php --test task --help
+php src/playground/test_trigger.php --help
+php src/playground/test_trigger.php --test method --help
+php src/playground/test_trigger.php --test task --help
 ```

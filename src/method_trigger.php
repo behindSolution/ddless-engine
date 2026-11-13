@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Method execution entry point. Bootstraps the debug engine and delegates
  * to the appropriate framework method executor for direct function/method

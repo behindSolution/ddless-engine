@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Task runner test. Boots a framework and executes arbitrary PHP code
  * with access to models, services, and the container — same flow as
@@ -103,9 +103,7 @@ $taskCode = $opts['code'];
 
 if ($opts['file'] !== null) {
     $filePath = $opts['file'];
-    if (!str_starts_with($filePath, '/') && !preg_match('/^[A-Za-z]:/', $filePath)) {
-        $filePath = $projectRoot . DIRECTORY_SEPARATOR . $filePath;
-    }
+    $filePath = ddless_playground_resolve_path($filePath, $projectRoot);
     if (!is_file($filePath)) {
         fwrite(STDERR, CLR_RED . "Error: Task file not found: {$filePath}" . CLR_RESET . "\n");
         exit(1);

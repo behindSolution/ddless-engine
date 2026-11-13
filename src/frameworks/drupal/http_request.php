@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Drupal 9/10/11 HTTP request handler. Bootstraps the DrupalKernel,
  * processes the captured HTTP request through the full middleware pipeline,

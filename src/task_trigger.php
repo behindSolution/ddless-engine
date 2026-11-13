@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Task runner entry point. Bootstraps the debug engine and delegates to
  * the appropriate framework task runner for executing user-written PHP code

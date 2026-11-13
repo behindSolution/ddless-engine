@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * CakePHP 4/5 method executor. Boots the CakePHP application and DI container,
  * then executes methods/functions with dependency injection support,

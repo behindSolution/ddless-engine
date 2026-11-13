@@ -10,11 +10,11 @@ This repo contains the engine only. The desktop app, UI, and AI Copilot are avai
 
 ddless-engine parses PHP source via AST ([nikic/PHP-Parser](https://github.com/nikic/PHP-Parser)), injects `ddless_step_check()` calls before each executable line using a custom stream wrapper, and communicates with the desktop app through file-based IPC. Your original files are never modified on disk.
 
-Supports breakpoints (conditional, logpoints, dumppoints), step-in/over/out, watch expressions, variable inspection, and trace mode.
+Supports breakpoints (conditional, logpoints, dumppoints), step-in/over/out, watch expressions, variable inspection, trace mode, and timeframe (record every executed line, then replay to any point).
 
 ## Frameworks
 
-CakePHP · CodeIgniter 4 · Drupal · Laravel · Vanilla PHP · Symfony · Tempest · WordPress · Yii2
+CakePHP · CodeIgniter 4 · Drupal · Laravel · Slim 4 · Symfony · Tempest · Vanilla PHP · WordPress · Yii2
 
 ## Project layout
 
@@ -36,11 +36,24 @@ src/
 │   ├── symfony/
 │   ├── tempest/
 │   ├── wordpress/
-│   └── yii/
-├── sessions/                File-based IPC (runtime ↔ desktop app)
-├── cache/                   Pre-instrumented code cache
+│   └── yii2/
+├── playground/              Terminal debugger to exercise the engine without the desktop app
+├── sessions/                File-based IPC (runtime ↔ desktop app) — created at runtime, git-ignored
+├── cache/                   Pre-instrumented code cache — created at runtime, git-ignored
 └── vendor-internal/         Bundled PHP-Parser (no Composer required)
 ```
+
+## Try it
+
+No desktop app and no project needed — a bare clone is enough:
+
+```bash
+php src/playground/test_trigger.php --code '$x = 1; $y = 2; echo $x + $y;' --bp 1
+```
+
+It pauses on the line and shows a prompt: `c` continue, `n` next, `s` step in, `o` step out, `v` variables, `q` quit.
+
+The playground also drives the method executor, the task runner and the HTTP pipeline of each framework. See [CONTRIBUTING.md](CONTRIBUTING.md) and [src/playground/README.md](src/playground/README.md).
 
 ## Requirements
 

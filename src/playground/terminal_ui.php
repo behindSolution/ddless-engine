@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Shared terminal UI utilities for the playground test suite.
  * Provides ANSI colors, variable formatting, breakpoint handler,
@@ -80,6 +80,22 @@ function ddless_resolve_paths(): array
     exit(1);
 }
 
+/**
+ * Resolve a file given on the command line. A relative path is looked up in
+ * the current directory first, then in the project root.
+ */
+function ddless_playground_resolve_path(string $path, string $projectRoot): string
+{
+    if (str_starts_with($path, '/') || preg_match('/^[A-Za-z]:/', $path)) {
+        return $path;
+    }
+    $fromCwd = getcwd() . DIRECTORY_SEPARATOR . $path;
+    if (is_file($fromCwd)) {
+        return $fromCwd;
+    }
+    return $projectRoot . DIRECTORY_SEPARATOR . $path;
+}
+
 // ─── Variable formatting ────────────────────────────────────────────────────
 
 function ddless_terminal_format_value($value, int $indent = 4, int $depth = 0, int $maxDepth = 3): string
@@ -95,6 +111,21 @@ function ddless_terminal_format_value($value, int $indent = 4, int $depth = 0, i
             $value = substr($value, 0, 117) . '...';
         }
         return CLR_GREEN . '"' . $value . '"' . CLR_RESET;
+    }
+    if (is_array($value) && ($value['__ddless_lazy__'] ?? false) === true) {
+        $class = (string) ($value['class'] ?? 'object');
+        $token = $value['token'] ?? null;
+        if ($depth >= $maxDepth || !is_string($token) || !function_exists('ddless_lazy_expand')) {
+            return CLR_YELLOW . $class . CLR_RESET . CLR_DIM . ' {...}' . CLR_RESET;
+        }
+        $properties = [];
+        foreach ((ddless_lazy_expand($token)['children'] ?? []) as $name => $child) {
+            $properties[$name] = array_key_exists('value', $child) ? $child['value'] : '[' . ($child['error'] ?? 'unreadable') . ']';
+        }
+        if (empty($properties)) {
+            return CLR_YELLOW . $class . CLR_RESET . ' {}';
+        }
+        return CLR_YELLOW . $class . CLR_RESET . ' ' . ddless_terminal_format_value($properties, $indent, $depth + 1, $maxDepth);
     }
     if (is_array($value)) {
         if (empty($value)) return '[]';
@@ -244,8 +275,8 @@ function ddless_register_terminal_handler(): void
             . "]ontinue  [" . CLR_RESET . CLR_BOLD . "n" . CLR_RESET . CLR_DIM
             . "]ext  [" . CLR_RESET . CLR_BOLD . "s" . CLR_RESET . CLR_DIM
             . "]tep  [" . CLR_RESET . CLR_BOLD . "o" . CLR_RESET . CLR_DIM
-            . "]ut  [" . CLR_RESET . CLR_BOLD . "d" . CLR_RESET . CLR_DIM
-            . "]ebug  [" . CLR_RESET . CLR_BOLD . "q" . CLR_RESET . CLR_DIM
+            . "]ut  [" . CLR_RESET . CLR_BOLD . "v" . CLR_RESET . CLR_DIM
+            . "]ars  [" . CLR_RESET . CLR_BOLD . "q" . CLR_RESET . CLR_DIM
             . "]uit" . CLR_RESET . " > ";
 
         $showingVars = false;
@@ -262,7 +293,7 @@ function ddless_register_terminal_handler(): void
                 case 'n': case 'next':     return 'next';
                 case 's': case 'step': case 'step_in':  return 'step_in';
                 case 'o': case 'out':  case 'step_out': return 'step_out';
-                case 'd': case 'debug':
+                case 'v': case 'vars': case 'd': case 'debug':
                     $showingVars = !$showingVars;
                     $showingVars ? $drawVarsView() : $drawDebugView();
                     break;
@@ -315,9 +346,16 @@ function ddless_cleanup_session(string $sessionDir, ?string $tempCodeFile = null
     if ($tempCodeFile !== null && is_file($tempCodeFile)) {
         @unlink($tempCodeFile);
     }
-    @unlink($sessionDir . '/breakpoints.json');
-    @unlink($sessionDir . '/breakpoint_state.json');
-    @unlink($sessionDir . '/breakpoint_command.json');
+    if (!is_dir($sessionDir) || basename(dirname($sessionDir)) !== 'sessions') {
+        return;
+    }
+    $entries = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($sessionDir, RecursiveDirectoryIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    foreach ($entries as $entry) {
+        $entry->isDir() ? @rmdir($entry->getPathname()) : @unlink($entry->getPathname());
+    }
     @rmdir($sessionDir);
 }
 

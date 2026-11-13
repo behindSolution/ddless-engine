@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Symfony method executor. Bootstraps the Symfony application kernel and
  * container, then executes methods/functions with dependency injection

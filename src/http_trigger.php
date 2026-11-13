@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * HTTP request entry point. Receives captured request payload from Electron,
  * reconstructs PHP superglobals ($_SERVER, $_GET, $_POST, $_COOKIE, $_FILES),

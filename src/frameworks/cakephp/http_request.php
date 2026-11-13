@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * CakePHP 4/5 HTTP request handler. Bootstraps the CakePHP application,
  * processes the captured HTTP request through the full middleware pipeline,

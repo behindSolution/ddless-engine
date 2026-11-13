@@ -1,2 +1,15 @@
 .idea/
 .claude/
+
+# Runtime files written by the engine and the playground
+src/sessions/
+src/cache/
+src/task_*.pid
+src/task_input_temp.json
+src/method_input_temp.json
+src/breakpoints.json
+src/last_request.json
+src/last_execution.json
+
+# Scratch files from the playground walkthrough
+/boot.php

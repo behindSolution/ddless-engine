@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * CodeIgniter 4 HTTP request handler. Bootstraps the CI4 application,
  * processes the captured HTTP request through the full routing/filter pipeline,

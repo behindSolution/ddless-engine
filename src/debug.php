@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Core debug engine: breakpoint management, code instrumentation via AST,
  * stream wrapper for in-memory code serving, and file-based IPC for

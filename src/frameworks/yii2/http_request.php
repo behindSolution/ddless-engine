@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Yii 2 HTTP request handler. Bootstraps the Yii2 application,
  * processes the captured HTTP request through the full routing pipeline,

@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * WordPress HTTP request handler. Bootstraps WordPress via wp-blog-header.php,
  * configures superglobals, and captures the full HTTP response with snapshot.

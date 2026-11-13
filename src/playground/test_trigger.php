@@ -5,7 +5,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Playground entry point. Routes to the appropriate test runner
  * based on --test flag. Designed for the open-source ddless-engine

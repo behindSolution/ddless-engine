@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Generic PHP method executor. Executes methods/functions without a
  * framework container, using reflection for class instantiation and

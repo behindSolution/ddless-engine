@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Laravel method executor. Bootstraps the Laravel application container
  * and executes methods/functions with full dependency injection support,

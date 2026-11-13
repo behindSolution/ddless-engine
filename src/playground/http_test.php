@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * HTTP request test runner. Integrates with PHP's built-in server to
  * route real HTTP requests through a framework's http_request.php handler.

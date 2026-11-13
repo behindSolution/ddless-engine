@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Method executor test runner. Boots a framework, resolves a class from the
  * container, and calls a method — same flow as the DDLess Test Method feature.
@@ -134,9 +134,7 @@ if (!is_file($executorPath)) {
 $parameterCode = 'return [];';
 if ($opts['paramsFile'] !== null) {
     $paramsPath = $opts['paramsFile'];
-    if (!str_starts_with($paramsPath, '/') && !preg_match('/^[A-Za-z]:/', $paramsPath)) {
-        $paramsPath = $projectRoot . DIRECTORY_SEPARATOR . $paramsPath;
-    }
+    $paramsPath = ddless_playground_resolve_path($paramsPath, $projectRoot);
     if (!is_file($paramsPath)) {
         fwrite(STDERR, CLR_RED . "Error: Params file not found: {$paramsPath}" . CLR_RESET . "\n");
         exit(1);
@@ -147,9 +145,7 @@ if ($opts['paramsFile'] !== null) {
 $constructorCode = 'return [];';
 if ($opts['ctorFile'] !== null) {
     $ctorPath = $opts['ctorFile'];
-    if (!str_starts_with($ctorPath, '/') && !preg_match('/^[A-Za-z]:/', $ctorPath)) {
-        $ctorPath = $projectRoot . DIRECTORY_SEPARATOR . $ctorPath;
-    }
+    $ctorPath = ddless_playground_resolve_path($ctorPath, $projectRoot);
     if (!is_file($ctorPath)) {
         fwrite(STDERR, CLR_RED . "Error: Constructor file not found: {$ctorPath}" . CLR_RESET . "\n");
         exit(1);
@@ -230,40 +226,18 @@ function ddless_method_run_isolated(string $__ddless_executor_path__): void
     require $__ddless_executor_path__;
 }
 
-// Capture stdout to parse the result JSON
-ob_start();
-
-try {
-    ddless_method_run_isolated($executorPath);
-} catch (\SystemExit $e) {
-    // method_executor calls exit() — we can't prevent that in same process
-} catch (\Throwable $e) {
-    // If the executor throws instead of using ddless_method_error
-    if (ob_get_level() > 0) {
-        $output = ob_get_clean();
-    }
-    ddless_display_exception($e);
-    if ($hasBreakpoints) {
-        ddless_cleanup_session($session['sessionDir']);
-    }
-    fwrite(STDERR, "\n" . CLR_RED . "  ✖ Method execution failed." . CLR_RESET . "\n\n");
-    exit(1);
-}
-
-// Note: method_executor.php calls exit() after ddless_method_success/error,
-// so we won't normally reach here. The result is captured via a shutdown function.
-
 // ─── Shutdown handler to capture result ─────────────────────────────────────
-// Since method_executor calls exit(), we register a shutdown function
-// to parse and display the result.
+// method_executor.php calls exit() after ddless_method_success/error, so the
+// result is parsed and the session cleaned up in a shutdown function. It has
+// to be registered before the executor runs.
 
 $sessionForCleanup = $session ?? null;
 register_shutdown_function(function () use ($hasBreakpoints, $sessionForCleanup) {
     $output = ob_get_clean();
 
-    if ($output === false || trim($output) === '') {
-        fwrite(STDERR, CLR_DIM . "  (no output captured)" . CLR_RESET . "\n");
-    } else {
+    // The executor writes its result straight to STDOUT, past the buffer, so an
+    // empty buffer is the normal case.
+    if ($output !== false && trim($output) !== '') {
         // Filter DDLess markers from output
         $lines = explode("\n", $output);
         $jsonOutput = '';
@@ -288,3 +262,23 @@ register_shutdown_function(function () use ($hasBreakpoints, $sessionForCleanup)
 
     fwrite(STDERR, "\n");
 });
+
+// Capture stdout to parse the result JSON
+ob_start();
+
+try {
+    ddless_method_run_isolated($executorPath);
+} catch (\SystemExit $e) {
+    // method_executor calls exit() — we can't prevent that in same process
+} catch (\Throwable $e) {
+    // If the executor throws instead of using ddless_method_error
+    if (ob_get_level() > 0) {
+        $output = ob_get_clean();
+    }
+    ddless_display_exception($e);
+    if ($hasBreakpoints) {
+        ddless_cleanup_session($session['sessionDir']);
+    }
+    fwrite(STDERR, "\n" . CLR_RED . "  ✖ Method execution failed." . CLR_RESET . "\n\n");
+    exit(1);
+}

@@ -4,7 +4,7 @@
  *
  * @author    Jefferson T.S
  * @copyright 2025-2026 DDLess
- * @license   Proprietary
+ * @license   Source-available (see LICENSE)
  *
  * Yii 2 method executor. Boots the Yii2 application and executes
  * methods/functions with service locator support, returning serialized
