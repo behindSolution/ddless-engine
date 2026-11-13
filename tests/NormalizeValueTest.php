@@ -97,6 +97,46 @@ test('huge arrays are truncated instead of serialized whole', function () {
     assert_true(count($normalized) < 50000, 'all ' . count($normalized) . ' elements were serialized');
 });
 
+section('ddless_normalize_value() — values JSON cannot carry as they are');
+
+test('ISO-8859-1 text is shown as readable UTF-8', function () {
+    $latin1 = 'caf' . chr(233) . ' ' . chr(231) . 'a';
+    $normalized = ddless_normalize_value($latin1, 0);
+    assert_eq('café ça', $normalized);
+    assert_true(json_encode($normalized) !== false, 'must be encodable');
+});
+
+test('binary strings stay encodable', function () {
+    $binary = chr(0) . chr(255) . chr(128) . 'x' . chr(200);
+    $normalized = ddless_normalize_value($binary, 0);
+    assert_true(preg_match('//u', $normalized) === 1, 'result is valid UTF-8');
+    assert_true(json_encode($normalized) !== false);
+});
+
+test('valid UTF-8 is left untouched', function () {
+    assert_eq('São Paulo — 日本', ddless_normalize_value('São Paulo — 日本', 0));
+});
+
+test('NAN and INF become labels', function () {
+    assert_eq('NAN', ddless_normalize_value(NAN, 0));
+    assert_eq('INF', ddless_normalize_value(INF, 0));
+    assert_eq('-INF', ddless_normalize_value(-INF, 0));
+    assert_eq(1.5, ddless_normalize_value(1.5, 0));
+});
+
+test('a long string cut in the middle of a multibyte character stays valid', function () {
+    $long = str_repeat('a', 9999) . 'é' . str_repeat('b', 50);
+    $normalized = ddless_normalize_value($long, 0);
+    assert_true(preg_match('//u', $normalized) === 1, 'result is valid UTF-8');
+    assert_true(str_ends_with($normalized, '…'));
+    assert_eq(str_repeat('a', 9999) . '…', $normalized, 'the half character is dropped, not turned into garbage');
+});
+
+test('array keys that are not UTF-8 are made safe too', function () {
+    $normalized = ddless_normalize_value(['caf' . chr(233) => 1], 0);
+    assert_eq(['café' => 1], $normalized);
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }

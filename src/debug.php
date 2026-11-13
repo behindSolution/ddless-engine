@@ -25,6 +25,44 @@ $GLOBALS['__DDLESS_IPC_STREAM__'] = (php_sapi_name() === 'cli-server') ? STDERR 
 // CLI mode suppresses verbose diagnostic output to keep terminal clean
 $GLOBALS['__DDLESS_CLI_MODE__'] = (bool) getenv('DDLESS_CLI_MODE');
 
+/**
+ * json_encode() that never drops a payload: invalid UTF-8 is substituted and
+ * values JSON cannot represent become null instead of failing the whole call.
+ */
+function ddless_json_encode($data, int $flags = 0)
+{
+    return json_encode($data, $flags | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+}
+
+/**
+ * Make a string safe to show: text that is not UTF-8 (legacy ISO-8859-1,
+ * binary) has each high byte mapped to its code point, so "café" in Latin-1
+ * still reads as "café".
+ */
+function ddless_utf8_safe(string $value): string
+{
+    if ($value === '' || preg_match('//u', $value) === 1) {
+        return $value;
+    }
+    return (string) preg_replace_callback('/[\x80-\xFF]/', static function (array $m): string {
+        $byte = ord($m[0]);
+        return chr(0xC0 | ($byte >> 6)) . chr(0x80 | ($byte & 0x3F));
+    }, $value);
+}
+
+/** Cut a string to a byte limit without leaving half a UTF-8 character at the end. */
+function ddless_utf8_cut(string $value, int $limit): string
+{
+    $cut = substr($value, 0, $limit);
+    if (preg_match('//u', $value) !== 1) {
+        return $cut;
+    }
+    for ($drop = 0; $drop < 4 && preg_match('//u', $cut) !== 1; $drop++) {
+        $cut = substr($cut, 0, -1);
+    }
+    return $cut;
+}
+
 function ddless_log(string $msg): void {
     if (!$GLOBALS['__DDLESS_CLI_MODE__']) {
         fwrite(STDERR, $msg);
@@ -143,7 +181,7 @@ function ddless_write_breakpoint_state(array $payload, bool $clearPendingCommand
         @unlink($commandFile);
     }
 
-    $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    $json = ddless_json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     if ($json === false) {
         ddless_log("[ddless] Failed to encode breakpoint state\n");
         return false;
@@ -186,7 +224,7 @@ function ddless_wait_for_command(int $timeoutSeconds = 0): ?array
                 $data = json_decode($content, true);
                 if ($data !== null) {
                     @unlink($commandFile);
-                    ddless_log("[ddless] Command received: " . json_encode($data) . "\n");
+                    ddless_log("[ddless] Command received: " . ddless_json_encode($data) . "\n");
                     return $data;
                 } else {
                     ddless_log("[ddless] Failed to parse command JSON: " . substr($content, 0, 100) . "\n");
@@ -1022,7 +1060,7 @@ function ddless_trace_fn(string $file, int $line): int
 
     $startMs = round(($now - $GLOBALS['__DDLESS_TRACE_REQUEST_START__']) * 1000, 3);
 
-    fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_TRACE__:" . json_encode([
+    fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_TRACE__:" . ddless_json_encode([
         'seq' => $currentSeq,
         'label' => $label,
         'file' => $file,
@@ -1043,7 +1081,7 @@ function ddless_trace_exit(int $seq): void
     $durationMs = round((microtime(true) - $startTime) * 1000, 3);
     unset($GLOBALS['__DDLESS_TRACE_STARTS__'][$seq]);
 
-    fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_TRACE_EXIT__:" . json_encode([
+    fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_TRACE_EXIT__:" . ddless_json_encode([
         'seq' => $seq,
         'duration_ms' => $durationMs,
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
@@ -1554,7 +1592,7 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
                 $results[$expr] = ['__error__' => $e->getMessage()];
             }
         }
-        $payload = json_encode($results, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $payload = ddless_json_encode($results, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_WATCH__:{$payload}\n");
         fflush($GLOBALS['__DDLESS_IPC_STREAM__']);
     };
@@ -1585,12 +1623,12 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
             try {
                 $watchVal = ddless_eval_in_context($watchExpr, $scopeVariables, $scopeBacktrace);
                 $normalized = ddless_normalize_value($watchVal, 0);
-                $serialized = json_encode($normalized, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $serialized = ddless_json_encode($normalized, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                 $lastSerialized = $GLOBALS['__DDLESS_WATCH_LAST__'][$watchExpr] ?? null;
                 if ($serialized !== $lastSerialized) {
                     $GLOBALS['__DDLESS_WATCH_LAST__'][$watchExpr] = $serialized;
                     $useLoc = $prevLoc ?? ['file' => $relativePath, 'line' => $line];
-                    $historyPayload = json_encode([
+                    $historyPayload = ddless_json_encode([
                         'expr' => $watchExpr,
                         'value' => $normalized,
                         'file' => $useLoc['file'],
@@ -1627,7 +1665,7 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
             $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = $previousLazy;
             $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = $previousEager;
         }
-        $payload = json_encode([
+        $payload = ddless_json_encode([
             'file' => $relativePath, 'line' => $line, 'results' => $results,
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_DUMPPOINT__:{$payload}\n");
@@ -1669,7 +1707,7 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
             $GLOBALS['__DDLESS_LAZY_EXPAND_ENABLED__'] = $previousLazy;
             $GLOBALS['__DDLESS_EAGER_EXPAND_ENABLED__'] = $previousEager;
         }
-        $payload = json_encode([
+        $payload = ddless_json_encode([
             'file' => $relativePath, 'line' => $line, 'results' => $results,
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_DUMPPOINT__:{$payload}\n");
@@ -1689,7 +1727,7 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
                     if ($result === null) return 'null';
                     if (is_bool($result)) return $result ? 'true' : 'false';
                     if (is_string($result) || is_numeric($result)) return (string) $result;
-                    return json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '{?}';
+                    return ddless_json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '{?}';
                 } catch (\Throwable $e) {
                     return '{error: ' . $e->getMessage() . '}';
                 }
@@ -1697,7 +1735,7 @@ function ddless_step_check(string $file, int $line, string $relativePath, bool $
 
             $now = microtime(true);
 
-            $payload = json_encode([
+            $payload = ddless_json_encode([
                 'file' => $relativePath,
                 'line' => $line,
                 'message' => $message,
@@ -2026,15 +2064,19 @@ if (!function_exists('ddless_normalize_value')) {
             return is_scalar($value) ? $value : '[max-depth]';
         }
 
+        if (is_float($value) && !is_finite($value)) {
+            return is_nan($value) ? 'NAN' : ($value > 0 ? 'INF' : '-INF');
+        }
+
         if (is_null($value) || is_bool($value) || is_int($value) || is_float($value)) {
             return $value;
         }
 
         if (is_string($value)) {
             if (strlen($value) > 10000) {
-                return substr($value, 0, 10000) . '…';
+                return ddless_utf8_safe(ddless_utf8_cut($value, 10000)) . '…';
             }
-            return $value;
+            return ddless_utf8_safe($value);
         }
 
         if (is_array($value)) {
@@ -2045,7 +2087,7 @@ if (!function_exists('ddless_normalize_value')) {
                     $result['__ddless_notice__'] = sprintf('Showing first %d of %d items.', $maxItems, count($value));
                     break;
                 }
-                $result[$key] = ddless_normalize_value($item, $depth + 1);
+                $result[is_string($key) ? ddless_utf8_safe($key) : $key] = ddless_normalize_value($item, $depth + 1);
             }
             return $result;
         }
@@ -2722,7 +2764,7 @@ function ddless_tf_open()
         'scopeMode' => $GLOBALS['__DDLESS_TF_START_FILE__'] ? $GLOBALS['__DDLESS_TF_SCOPE_MODE__'] : null,
         'startedAt' => microtime(true),
     ];
-    fwrite($handle, json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
+    fwrite($handle, ddless_json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
 
     register_shutdown_function('ddless_tf_close');
 
@@ -2746,7 +2788,7 @@ function ddless_tf_close(): void
         'truncated' => (bool) $GLOBALS['__DDLESS_TF_TRUNCATED__'],
     ];
 
-    @fwrite($handle, json_encode(
+    @fwrite($handle, ddless_json_encode(
         ['type' => 'end'] + $summary + ['endedAt' => microtime(true)],
         JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
     ) . "\n");
@@ -2834,7 +2876,7 @@ function ddless_tf_journal_input(string $value): void
     }
     @file_put_contents(
         ddless_tf_input_journal_file(),
-        json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n",
+        ddless_json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n",
         FILE_APPEND | LOCK_EX
     );
 }
@@ -2947,7 +2989,7 @@ function ddless_tf_record(
         $GLOBALS['__DDLESS_TF_SCOPE_STACK__'][$depth] = ['fn' => $label, 'vars' => $vars];
     }
 
-    $json = json_encode(
+    $json = ddless_json_encode(
         $frame,
         JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR
     );
@@ -3127,7 +3169,7 @@ function ddless_handle_breakpoint(
         return;
     }
 
-    $jsonPayload = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $jsonPayload = ddless_json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     fwrite($GLOBALS['__DDLESS_IPC_STREAM__'], "__DDLESS_BREAKPOINT__:{$jsonPayload}\n");
     fflush($GLOBALS['__DDLESS_IPC_STREAM__']);
 
@@ -3145,7 +3187,7 @@ function ddless_handle_breakpoint(
             $GLOBALS['__DDLESS_STEP_OVER_FILE__'] = null;
             $GLOBALS['__DDLESS_STEP_OUT_TARGET__'] = null;
             $GLOBALS['__DDLESS_STEP_OUT_DEPTH__'] = null;
-            $timeoutPayload = json_encode([
+            $timeoutPayload = ddless_json_encode([
                 'type' => 'timeout',
                 'sessionId' => $sessionId,
                 'message' => 'Debug session timed out after ' . round(($GLOBALS['__DDLESS_BREAKPOINT_TIMEOUT__'] ?? 3600) / 60) . ' minutes of inactivity',
@@ -3443,7 +3485,7 @@ function ddless_emit_progress(int $current, int $total, string $currentFile): vo
     }
 
     $percent = $total > 0 ? round(($current / $total) * 100) : 0;
-    $payload = json_encode([
+    $payload = ddless_json_encode([
         'type' => 'instrumentation_progress',
         'current' => $current,
         'total' => $total,
@@ -3543,7 +3585,7 @@ function ddless_save_cache_index(array $index): bool
     
     $indexPath = ddless_get_cache_index_path();
     $index['allowGlobalScope'] = !empty($GLOBALS['__DDLESS_ALLOW_GLOBAL_SCOPE__']);
-    $content = json_encode($index, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    $content = ddless_json_encode($index, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     
     return @file_put_contents($indexPath, $content) !== false;
 }
@@ -3800,7 +3842,7 @@ function ddless_save_manifest(array $filePaths): void
         'files' => array_values($filePaths),
     ];
 
-    @file_put_contents(ddless_get_manifest_path(), json_encode($manifest, JSON_UNESCAPED_SLASHES));
+    @file_put_contents(ddless_get_manifest_path(), ddless_json_encode($manifest, JSON_UNESCAPED_SLASHES));
 }
 
 // ---------------------------------------------------------------------------

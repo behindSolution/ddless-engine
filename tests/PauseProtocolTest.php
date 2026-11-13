@@ -128,6 +128,28 @@ test('state file is replaced in one step and leaves no temp file behind', functi
     }
 });
 
+test('a payload with invalid UTF-8 or NAN is still written, so the pause is not skipped', function () {
+    $previousSession = getenv('DDLESS_DEBUG_SESSION');
+    putenv('DDLESS_DEBUG_SESSION=ddless-test-state-file');
+    $stateFile = ddless_get_breakpoint_state_file();
+    try {
+        $written = ddless_write_breakpoint_state([
+            'type' => 'breakpoint',
+            'line' => 7,
+            'label' => 'caf' . chr(233),
+            'ratio' => NAN,
+        ]);
+        assert_true($written, 'state must be written');
+        $decoded = json_decode((string) file_get_contents($stateFile), true);
+        assert_eq(7, $decoded['line'] ?? null, 'the readable part of the payload survives');
+    } finally {
+        @unlink($stateFile);
+        @unlink($stateFile . '.tmp');
+        @rmdir(dirname($stateFile));
+        putenv($previousSession === false ? 'DDLESS_DEBUG_SESSION' : "DDLESS_DEBUG_SESSION={$previousSession}");
+    }
+});
+
 if (basename(__FILE__) === basename($_SERVER['SCRIPT_FILENAME'] ?? '')) {
     exit(print_test_results());
 }
