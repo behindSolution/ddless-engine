@@ -1,7 +1,33 @@
 Terms of Use
 DDLess — Behind Solutions
 
-Last updated: February 22, 2026
+Last updated: November 13, 2026
+
+Source-Available License — ddless-engine
+This section applies to the source code published in the ddless-engine repository (the "Engine"). Where it conflicts with the Terms of Use below, this section prevails for the Engine. The DDLess desktop application and every other DDLess component remain governed by the Terms of Use only.
+
+Permitted
+You may, free of charge:
+
+- Read, download, and run the Engine source code, including to debug your own projects
+- Modify the Engine and create derivative works of it for your own use
+- Fork this repository and submit your changes back to it, for example as pull requests
+
+Not permitted
+Without prior written permission from Behind Solutions, you may not:
+
+- Sell, license, or otherwise commercialize the Engine or any derivative work of it
+- Offer the Engine or any derivative work of it to third parties as a hosted or managed service
+- Include the Engine or any derivative work of it in a product or service that competes with DDLess
+- Distribute the Engine or derivative works of it other than through a fork of this repository
+- Remove or alter copyright, license, or attribution notices
+- Use the Engine to circumvent the license validation or the paid features of the DDLess application
+
+Contributions
+By submitting a contribution to this repository, you confirm that you have the right to submit it, and you grant Behind Solutions a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license to use, modify, distribute, sublicense, and relicense your contribution, including as part of commercial products. You keep the copyright to your contribution.
+
+No other rights
+This section does not grant any right to the DDLess name, logos, or trademarks. Sections 4 and 8 to 15 of the Terms of Use below also apply to the Engine.
 
 1. Acceptance of Terms
 By downloading, installing, or using DDLess, you agree to be bound by these Terms of Use. If you do not agree with any part of these terms, you must not use the software.
@@ -23,6 +49,8 @@ You agree NOT to:
 - Use the software for any unlawful purpose or in violation of any applicable laws or regulations
 - Circumvent, disable, or tamper with the license validation or any security mechanisms of the software
 - Use automated tools to generate, guess, or brute-force license keys
+
+The restrictions above on access to source code, modification, derivative works, and redistribution do not apply to the Engine to the extent the Source-Available License at the top of this document permits those acts.
 
 4. Intellectual Property
 DDLess, including its code, design, documentation, logos, and trademarks, is the exclusive property of Behind Solutions. These Terms of Use do not grant you any ownership rights over the software. All rights not expressly granted herein are reserved.
